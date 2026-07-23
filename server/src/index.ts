@@ -6,6 +6,8 @@ import logger, { logError } from './config/logger.js'
 import createSessionMiddleware from './config/session.js'
 import { globalLimiter } from './middlewares/rateLimit.middleware.js'
 import emailRoutes from './routes/email.routes.js'
+import authRoutes from './routes/auth.routes.js'
+import userRoutes from './routes/user.routes.js'
 
 import {
   appErrorHandler,
@@ -88,7 +90,9 @@ app.use('/health', (req: Request, res: Response, next: NextFunction) => {
     uptime: process.uptime(),
   })
 })
-
+// Routes
+app.use('/api/v1/auth', authRoutes)
+app.use('/api/v1/users', userRoutes)
 
 
 // Handle 404

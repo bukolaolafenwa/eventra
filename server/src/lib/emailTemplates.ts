@@ -353,6 +353,20 @@ const baseLayout = (
     </html>
   `
 
+  export const resetPasswordTemplate = (name: string, code: string) =>
+  baseLayout(
+    'Reset your EventPulse password :key:',
+    name,
+    `
+      We got a request to reset the password on your account.
+      Enter this code to choose a new one — if you didn't ask for this, you can safely ignore this email.
+    `,
+    undefined,
+    undefined,
+    "This code expires in 15 minutes — request a new one if it lapses.",
+    code
+  )
+
 export const verifyAccountTemplate = (name: string, code: string, actionLink?: string) =>
   baseLayout(
     'Your Access to EventPulse :admission_tickets:',
