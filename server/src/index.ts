@@ -69,8 +69,7 @@ app.use(createSessionMiddleware())
 
 app.set('trust-proxy', 1)
 app.use(cors(corsOptions))
-app.use(globalLimiter) // Apply rate limiting to all requests 
-app.use(createSessionMiddleware())
+app.use(globalLimiter) // Apply rate limiting to all requests
 app.use(express.json({ limit: '25mb' }))
 app.use(express.urlencoded({ extended: true, limit: '25mb' }))
 app.disable('x-powered-by')

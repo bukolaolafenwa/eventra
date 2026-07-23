@@ -27,7 +27,7 @@ const connectionOptions: ConnectOptions = {
 
 export const connectDB = async (): Promise<void> => {
   if (dbConnection.isConnected) {
-    logger.info('Using exisiting MongoDb connection')
+    logger.info('Using existing MongoDb connection')
     return
   }
 
@@ -44,7 +44,7 @@ export const connectDB = async (): Promise<void> => {
     if (dbConnection.isConnected) {
       logger.info(`MongoDb Connected: ${conn.connection.host}`)
 
-      //conection event handlers
+      //connection event handlers
       mongoose.connection.on('error', err => {
         logger.error(`MongoDb connection error`, err)
         dbConnection.isConnected = false

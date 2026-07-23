@@ -2,7 +2,7 @@ import axios from 'axios'
 import { env } from '../config/keys.js'
 import logger, { logError } from '../config/logger.js'
 
-const BREVO_API_URL = 'api.brevo.com/v3/smtp/email'
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email'
 
 export interface SendEmailOptions {
   email: string
@@ -45,7 +45,7 @@ const sendViaBrevo = async (
     const recipients = (Array.isArray(to) ? to : [to]).map(email => ({ email }))
 
     const payload: Record<string, any> = {
-      sender: { name: 'EventPulse', email: env.EMAIL_OWNER || 'onboarding@eventpulse.com' },
+      sender: { name: 'EventPulse', email: env.EMAIL_OWNER },
       to: recipients,
       subject,
       htmlContent: html,

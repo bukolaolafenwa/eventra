@@ -22,7 +22,7 @@ const logger: Logger = pino({
     : undefined,
 })
 
-//helper functions to log erros with context
+// Helper functions to log erros with context
 
 export const logError = (error: Error | unknown, context?: string, metadata?: Record<string, unknown>): void => {
   const errorInfo =
@@ -36,11 +36,11 @@ export const logError = (error: Error | unknown, context?: string, metadata?: Re
       context,
       ...metadata,
     },
-    context || 'An error occured'
+    context || 'An error occurred'
   )
 }
 
-//helper fnction to log http request
+// Helper function to log http request
 export const logRequest = (
   req: {
     method: string
