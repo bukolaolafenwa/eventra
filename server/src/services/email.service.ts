@@ -1,5 +1,5 @@
 import sendEmail from '../email/send-email.js'
-import { verifyAccountTemplate } from '../lib/emailTemplates.js'
+import { verifyAccountTemplate, resetPasswordTemplate } from '../lib/emailTemplates.js'
 import EmailQueue from '../models/emailQueue.js'
 // import { IUser } from '../models/user.js'
 
@@ -32,6 +32,35 @@ export class EmailService {
       status: 'queued',
       retryCount: 0,
       nextRetryAt: new Date(Date.now() + 5 * 60 * 1000), // First retry in 5 minutes
+    })
+    return { success: false, queued: true }
+  }
+
+  static async sendPasswordResetEmail({
+    user,
+    otp,
+  }: {
+    user: any
+    otp: string
+  }): Promise<{ success: boolean; queued: boolean }> {
+    const htmlBody = resetPasswordTemplate(user.fullname, otp)
+    const result = await sendEmail({
+      email: user.email,
+      subject: 'Reset your password - Eventra',
+      message: htmlBody,
+    })
+    if (result.success) {
+      return { success: true, queued: false }
+    }
+
+    await EmailQueue.create({
+      to: user.email,
+      subject: 'Reset your password - Eventra',
+      html: htmlBody,
+      priority: 'high',
+      status: 'queued',
+      retryCount: 0,
+      nextRetryAt: new Date(Date.now() + 5 * 60 * 1000),
     })
     return { success: false, queued: true }
   }
