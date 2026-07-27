@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon --watch '**/*.ts' --exec 'tsx' --inspect src/index.ts"
+    "dev": "tsx watch --inspect src/index.ts"
   },
   "keywords": [],
   "author": "",

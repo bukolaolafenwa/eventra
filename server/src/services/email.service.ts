@@ -26,7 +26,7 @@ export class EmailService {
     // Queue for retry via cron job
     await EmailQueue.create({
       to: user.email,
-      subject: 'Verify your account - EventPulse',
+      subject: 'Verify your account - Eventra',
       html: htmlBody,
       priority: 'high',
       status: 'queued',

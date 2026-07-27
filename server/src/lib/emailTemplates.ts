@@ -13,7 +13,7 @@ const baseLayout = (
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-        <title>${title} - EventPulse</title>
+        <title>${title} - Eventra</title>
         <style>
           @import url('fonts.googleapis.com/css2?family=…&display=swap');
 
@@ -282,7 +282,7 @@ const baseLayout = (
                     <circle cx="16" cy="15" r="1"></circle>
                     <circle cx="8" cy="15" r="1"></circle>
                   </svg>
-                  EventPulse
+                  Eventra
                 </div>
                 <span class="event-badge">:sparkles: Live</span>
               </div>
@@ -355,7 +355,7 @@ const baseLayout = (
 
   export const resetPasswordTemplate = (name: string, code: string) =>
   baseLayout(
-    'Reset your EventPulse password :key:',
+    'Reset your Eventra password :key:',
     name,
     `
       We got a request to reset the password on your account.
@@ -369,10 +369,10 @@ const baseLayout = (
 
 export const verifyAccountTemplate = (name: string, code: string, actionLink?: string) =>
   baseLayout(
-    'Your Access to EventPulse :admission_tickets:',
+    'Your Access to Eventra :admission_tickets:',
     name,
     `
-      Welcome to <strong>EventPulse</strong> — your backstage pass to managing incredible events.
+      Welcome to <strong>Eventra</strong> — your backstage pass to managing incredible events.
       You're one step away from going live.
 
       <div class="ticket-line">
