@@ -20,7 +20,7 @@ export interface IEvent extends Document {
     | "postponed";
   capacity?: number;
   reservedCount: number;
-  refundPolicy: string;
+  refundPolicy?: string;
   slug: string;
   isPromoted: boolean;
   promotionId?: mongoose.Types.ObjectId;
@@ -51,7 +51,12 @@ const EventSchema = new Schema<IEvent>(
     },
     capacity: { type: Number },
     reservedCount: { type: Number, default: 0 },
-    refundPolicy: { type: String, required: true },
+    refundPolicy: {
+      type: String,
+      required: function (this: IEvent) {
+        return this.type === "paid";
+      },
+    },
     slug: { type: String, required: true, trim: true, lowercase: true },
     isPromoted: { type: Boolean, default: false },
     promotionId: { type: Schema.Types.ObjectId, ref: "Promotion" },
