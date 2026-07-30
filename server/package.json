@@ -38,5 +38,9 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.23.0",
     "typescript": "^7.0.2"
-  }
+  },
+  "overrides": {
+  "react-router": "8.2.1",
+  "react-router-dom": "8.2.1"
+}
 }
