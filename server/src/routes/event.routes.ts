@@ -1,3 +1,7 @@
+import { Router } from 'express';
 import { EventController } from '../controllers/event.controller.js';
-const eventController = new EventController();
-// attach routes as before
+import { EventService } from '../services/event.service.js';
+
+const router = Router();
+const eventService = new EventService();
+const eventController = new EventController(eventService);

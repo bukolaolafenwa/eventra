@@ -14,6 +14,8 @@ export interface UpdateEventInput {
   location?: string;
   capacity?: number;
   price?: number;
+  status:  'published' | 'cancelled' | 'postponed';
+
 }
 
 export interface EventFilters {

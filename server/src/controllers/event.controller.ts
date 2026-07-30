@@ -1,19 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
-import { validate } from '../utils/validation.js';
+import { EventService } from '../services/event.service.js';  
+import { CreateEventInput, UpdateEventInput, EventFilters } from '../types/event.types.js';
+import { validate } from '../utils/validation.js'; 
 import { z } from 'zod';
-import { CreateEventInput, UpdateEventInput, EventFilters, Event } from '../types/event.types.js';
 
-// --- In-memory data store (simulate database) ---
-let events: Event[] = [];
-let idCounter = 1;
-
-// --- Validation Schemas ---
+// --- Validation Schemas (using Zod) ---
 const createEventSchema = z.object({
-  title: z.string().min(3).max(100),
+  title: z.string().min(3).max(100),           // fixed: added ()
   description: z.string().optional(),
   date: z.string().datetime(),
   location: z.string().optional(),
-  capacity: z.number().int().positive().optional(),
+  capacity: z.number().int().positive().optional(), // fixed: added ()
   price: z.number().nonnegative().optional(),
 });
 
@@ -24,10 +21,11 @@ const updateEventSchema = z.object({
   location: z.string().optional(),
   capacity: z.number().int().positive().optional(),
   price: z.number().nonnegative().optional(),
+  status: z.enum(['published', 'cancelled', 'postponed'])
 });
 
-const idParamSchema = z.object({
-  id: z.string().uuid(), // or z.string() if you use numeric IDs
+const idParamsSchema = z.object({
+  id: z.string().uuid(),
 });
 
 const searchQuerySchema = z.object({
@@ -43,7 +41,8 @@ const filterQuerySchema = z.object({
 });
 
 export class EventController {
-  // --- Helper: send success response ---
+  constructor(private eventService: EventService) {}
+
   private sendSuccess(res: Response, statusCode: number, data: any) {
     return res.status(statusCode).json({
       success: true,
@@ -52,7 +51,6 @@ export class EventController {
     });
   }
 
-  // --- Helper: send error response ---
   private sendError(res: Response, statusCode: number, message: string) {
     return res.status(statusCode).json({
       success: false,
@@ -61,20 +59,11 @@ export class EventController {
     });
   }
 
-  // -------- CRUD operations --------
-
   createEvent = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const validatedData = validate<CreateEventInput>(createEventSchema, req.body);
-      const newEvent: Event = {
-        id: String(idCounter++),
-        ...validatedData,
-        status: 'draft',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      events.push(newEvent);
-      this.sendSuccess(res, 201, newEvent);
+      const event = await this.eventService.createEvent(validatedData);
+      this.sendSuccess(res, 201, event);
     } catch (error) {
       next(error);
     }
@@ -84,14 +73,7 @@ export class EventController {
     try {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 10;
-      const start = (page - 1) * limit;
-      const paginated = events.slice(start, start + limit);
-      const result = {
-        items: paginated,
-        total: events.length,
-        page,
-        limit,
-      };
+      const result = await this.eventService.getEvents(page, limit);
       this.sendSuccess(res, 200, result);
     } catch (error) {
       next(error);
@@ -100,8 +82,8 @@ export class EventController {
 
   getEventById = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = validate<{ id: string }>(idParamSchema, req.params);
-      const event = events.find(e => e.id === id);
+      const { id } = validate<{ id: string }>(idParamsSchema, req.params);
+      const event = await this.eventService.getEventById(id);
       if (!event) {
         return this.sendError(res, 404, 'Event not found');
       }
@@ -113,18 +95,12 @@ export class EventController {
 
   updateEvent = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = validate<{ id: string }>(idParamSchema, req.params);
+      const { id } = validate<{ id: string }>(idParamsSchema, req.params);
       const validatedData = validate<UpdateEventInput>(updateEventSchema, req.body);
-      const index = events.findIndex(e => e.id === id);
-      if (index === -1) {
+      const updated = await this.eventService.updateEvent(id, validatedData);
+      if (!updated) {
         return this.sendError(res, 404, 'Event not found');
       }
-      const updated = {
-        ...events[index],
-        ...validatedData,
-        updatedAt: new Date().toISOString(),
-      };
-      events[index] = updated;
       this.sendSuccess(res, 200, updated);
     } catch (error) {
       next(error);
@@ -133,28 +109,21 @@ export class EventController {
 
   deleteEvent = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = validate<{ id: string }>(idParamSchema, req.params);
-      const index = events.findIndex(e => e.id === id);
-      if (index === -1) {
+      const { id } = validate<{ id: string }>(idParamsSchema, req.params);
+      const deleted = await this.eventService.deleteEvent(id);
+      if (!deleted) {
         return this.sendError(res, 404, 'Event not found');
       }
-      events.splice(index, 1);
       this.sendSuccess(res, 200, { message: 'Event deleted successfully' });
     } catch (error) {
       next(error);
     }
   };
 
-  // -------- Search & Filter --------
-
   searchEvents = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { q } = validate<{ q: string }>(searchQuerySchema, req.query);
-      const lower = q.toLowerCase();
-      const results = events.filter(e =>
-        e.title.toLowerCase().includes(lower) ||
-        (e.description && e.description.toLowerCase().includes(lower))
-      );
+      const results = await this.eventService.searchEvents(q);
       this.sendSuccess(res, 200, results);
     } catch (error) {
       next(error);
@@ -164,37 +133,21 @@ export class EventController {
   filterEvents = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const filters = validate<EventFilters>(filterQuerySchema, req.query);
-      const results = events.filter(e => {
-        if (filters.startDate && new Date(e.date) < new Date(filters.startDate)) return false;
-        if (filters.endDate && new Date(e.date) > new Date(filters.endDate)) return false;
-        if (filters.location && e.location !== filters.location) return false;
-        if (filters.minPrice !== undefined && (e.price ?? 0) < filters.minPrice) return false;
-        if (filters.maxPrice !== undefined && (e.price ?? 0) > filters.maxPrice) return false;
-        return true;
-      });
+      const results = await this.eventService.filterEvents(filters);
       this.sendSuccess(res, 200, results);
     } catch (error) {
       next(error);
     }
   };
 
-  // -------- State changes --------
-
   publishEvent = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = validate<{ id: string }>(idParamSchema, req.params);
-      const index = events.findIndex(e => e.id === id);
-      if (index === -1) {
+      const { id } = validate<{ id: string }>(idParamsSchema, req.params);
+      const published = await this.eventService.publishEvent(id);
+      if (!published) {
         return this.sendError(res, 404, 'Event not found');
       }
-      const event = events[index];
-      if (event.status === 'cancelled') {
-        throw new Error('Cannot publish a cancelled event');
-      }
-      event.status = 'published';
-      event.updatedAt = new Date().toISOString();
-      events[index] = event;
-      this.sendSuccess(res, 200, event);
+      this.sendSuccess(res, 200, published);
     } catch (error) {
       next(error);
     }
@@ -202,19 +155,12 @@ export class EventController {
 
   cancelEvent = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = validate<{ id: string }>(idParamSchema, req.params);
-      const index = events.findIndex(e => e.id === id);
-      if (index === -1) {
+      const { id } = validate<{ id: string }>(idParamsSchema, req.params);
+      const cancelled = await this.eventService.cancelEvent(id);
+      if (!cancelled) {
         return this.sendError(res, 404, 'Event not found');
       }
-      const event = events[index];
-      if (event.status === 'published') {
-        throw new Error('Cannot cancel a published event (you may refund tickets)');
-      }
-      event.status = 'cancelled';
-      event.updatedAt = new Date().toISOString();
-      events[index] = event;
-      this.sendSuccess(res, 200, event);
+      this.sendSuccess(res, 200, cancelled);
     } catch (error) {
       next(error);
     }
@@ -222,24 +168,16 @@ export class EventController {
 
   postponeEvent = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { id } = validate<{ id: string }>(idParamSchema, req.params);
+      const { id } = validate<{ id: string }>(idParamsSchema, req.params);
       const { newDate } = req.body;
       if (!newDate || typeof newDate !== 'string') {
         return this.sendError(res, 400, 'newDate is required and must be a string');
       }
-      const index = events.findIndex(e => e.id === id);
-      if (index === -1) {
+      const postponed = await this.eventService.postponeEvent(id, newDate);
+      if (!postponed) {
         return this.sendError(res, 404, 'Event not found');
       }
-      const event = events[index];
-      if (event.status === 'cancelled') {
-        throw new Error('Cannot postpone a cancelled event');
-      }
-      event.date = newDate;
-      event.status = 'postponed';
-      event.updatedAt = new Date().toISOString();
-      events[index] = event;
-      this.sendSuccess(res, 200, event);
+      this.sendSuccess(res, 200, postponed);
     } catch (error) {
       next(error);
     }
