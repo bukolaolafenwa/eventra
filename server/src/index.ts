@@ -46,18 +46,33 @@ setupGlobalErrorHandlers()
 app.use('/api', emailRoutes)
 
 // CORS configuration
-const allowedOrigins = [env.CLIENT_URL]
-if (env.NODE_ENV === 'production' && env.CLIENT_URL) {
-  allowedOrigins.push(env.CLIENT_URL)
-}
+const normalizeOrigin = (url: string): string => url.replace(/\/+$/, '')
+
+const allowedOrigins = [
+  env.CLIENT_URL,
+  'http://localhost:4000',
+  'http://localhost:4001',
+  'http://localhost:4002',
+  'http://127.0.0.1:4000',
+  'http://127.0.0.1:4001',
+  'http://127.0.0.1:4002',
+]
+  .filter(Boolean)
+  .map(normalizeOrigin)
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true)
-    } else {
-      callback(new Error('Not allowed by CORS'))
+    // Allow requests without an Origin header (Postman, mobile apps, server-to-server)
+    if (!origin) {
+      return callback(null, true)
     }
+
+    if (allowedOrigins.includes(normalizeOrigin(origin))) {
+      return callback(null, true)
+    }
+
+    console.error(`❌ CORS blocked origin: ${origin}`)
+    return callback(new Error(`Origin ${origin} is not allowed by CORS`))
   },
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
