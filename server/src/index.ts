@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express'
 import cors from 'cors'
+import mongoose from 'mongoose'
 import { connectDB, gracefulShutDown } from './config/database.js'
 import { env } from './config/keys.js'
 import logger, { logError } from './config/logger.js'
@@ -81,13 +82,27 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next()
 })
 
-app.use('/health', (req: Request, res: Response, next: NextFunction) => {
+// app.use('/health', (req: Request, res: Response, next: NextFunction) => {
+//   res.status(200).json({
+//     status: 'success',
+//     message: 'Server is running',
+//     environment: env.NODE_ENV,
+//     timestamp: req.requestTime,
+//     uptime: process.uptime(),
+//   })
+// })
+
+
+app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({
     status: 'success',
-    message: 'Server is running',
+    message: 'Server is healthy',
     environment: env.NODE_ENV,
     timestamp: req.requestTime,
     uptime: process.uptime(),
+    database:
+      mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    version: process.env.npm_package_version || '1.0.0',
   })
 })
 // Routes
