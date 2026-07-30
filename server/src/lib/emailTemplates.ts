@@ -13,7 +13,7 @@ const baseLayout = (
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-        <title>${title} - EventPulse</title>
+        <title>${title} - Eventra</title>
         <style>
           @import url('fonts.googleapis.com/css2?family=…&display=swap');
 
@@ -282,7 +282,7 @@ const baseLayout = (
                     <circle cx="16" cy="15" r="1"></circle>
                     <circle cx="8" cy="15" r="1"></circle>
                   </svg>
-                  EventPulse
+                  Eventra
                 </div>
                 <span class="event-badge">:sparkles: Live</span>
               </div>
@@ -353,12 +353,26 @@ const baseLayout = (
     </html>
   `
 
-export const verifyAccountTemplate = (name: string, code: string, actionLink?: string) =>
+  export const resetPasswordTemplate = (name: string, code: string) =>
   baseLayout(
-    'Your Access to EventPulse :admission_tickets:',
+    'Reset your Eventra password :key:',
     name,
     `
-      Welcome to <strong>EventPulse</strong> — your backstage pass to managing incredible events.
+      We got a request to reset the password on your account.
+      Enter this code to choose a new one — if you didn't ask for this, you can safely ignore this email.
+    `,
+    undefined,
+    undefined,
+    "This code expires in 15 minutes — request a new one if it lapses.",
+    code
+  )
+
+export const verifyAccountTemplate = (name: string, code: string, actionLink?: string) =>
+  baseLayout(
+    'Your Access to Eventra :admission_tickets:',
+    name,
+    `
+      Welcome to <strong>Eventra</strong> — your backstage pass to managing incredible events.
       You're one step away from going live.
 
       <div class="ticket-line">
