@@ -1,47 +1,49 @@
-import mongoose, { Document, Schema } from 'mongoose'
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface IEventVenue {
-  name: string
-  address: string
-  city: string
-  state?: string
+  name: string;
+  address: string;
+  city: string;
+  state?: string;
 }
 
 export interface IRefundPolicy {
-  type: 'no-refunds' | 'refund-until-days-before'
-  daysBefore?: number
+  type: "no-refunds" | "refund-until-days-before";
+  daysBefore?: number;
 }
 
 export interface IEvent extends Document {
-  _id: mongoose.Types.ObjectId
-  organizer: mongoose.Types.ObjectId
-  title: string
-  slug: string
-  description: string
-  category: mongoose.Types.ObjectId
-  type: 'free' | 'paid'
-  coverImage?: string
-  venue: IEventVenue
-  startDate: Date
-  endDate?: Date
-  capacity?: number
-  refundPolicy?: IRefundPolicy
-  status: 'draft' | 'pending_approval' | 'approved' | 'rejected' | 'cancelled' | 'postponed'
-  rejectionReason?: string
+  _id: mongoose.Types.ObjectId;
+  organizer: mongoose.Types.ObjectId;
+  title: string;
+  slug: string;
+  description: string;
+  category: mongoose.Types.ObjectId;
+  type: "free" | "paid";
+  coverImage: string;
+  venue: IEventVenue;
+  startDate: Date;
+  endDate?: Date;
+  capacity?: number;
+  refundPolicy?: IRefundPolicy;
+  status: "draft" | "pending_approval" | "approved" | "rejected" | "cancelled" | "postponed" | "suspended";
+  rejectionReason?: string;
 
-  // --- Promotion: kept as a separate collection (see note below), not embedded ---
-  isPromoted: boolean
-  promotionId?: mongoose.Types.ObjectId
+  suspendedReason?: string;
 
-  reservationsCount: number
-  ticketsSoldCount: number
-  revenueTotal: number
-  minPrice: number
-  publishedAt?: Date
-  cancelledAt?: Date
-  postponedTo?: Date
-  createdAt: Date
-  updatedAt: Date
+
+  isPromoted: boolean;
+  promotionId?: mongoose.Types.ObjectId;
+
+  reservationsCount: number;
+  ticketsSoldCount: number;
+  revenueTotal: number;
+  minPrice: number;
+  publishedAt?: Date;
+  cancelledAt?: Date;
+  postponedTo?: Date;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 const EventVenueSchema = new Schema<IEventVenue>(
@@ -51,26 +53,26 @@ const EventVenueSchema = new Schema<IEventVenue>(
     city: { type: String, required: true, trim: true },
     state: { type: String, trim: true },
   },
-  { _id: false }
-)
+  { _id: false },
+);
 
 const RefundPolicySchema = new Schema<IRefundPolicy>(
   {
     type: {
       type: String,
-      enum: ['no-refunds', 'refund-until-days-before'],
-      default: 'no-refunds',
+      enum: ["no-refunds", "refund-until-days-before"],
+      default: "no-refunds",
     },
     daysBefore: { type: Number, min: 0 },
   },
-  { _id: false }
-)
+  { _id: false },
+);
 
 const EventSchema = new Schema<IEvent>(
   {
     organizer: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true,
     },
     title: {
@@ -91,16 +93,17 @@ const EventSchema = new Schema<IEvent>(
     },
     category: {
       type: Schema.Types.ObjectId,
-      ref: 'Category',
+      ref: "Category",
       required: true,
     },
     type: {
       type: String,
-      enum: ['free', 'paid'],
+      enum: ["free", "paid"],
       required: true,
     },
     coverImage: {
       type: String,
+      required: true,
       trim: true,
     },
     venue: {
@@ -114,6 +117,7 @@ const EventSchema = new Schema<IEvent>(
     endDate: {
       type: Date,
     },
+
     capacity: {
       type: Number,
       min: 0,
@@ -121,29 +125,30 @@ const EventSchema = new Schema<IEvent>(
     refundPolicy: {
       type: RefundPolicySchema,
       required: function (this: IEvent) {
-        return this.type === 'paid'
+        return this.type === "paid";
       },
     },
     status: {
       type: String,
-      enum: ['draft', 'pending_approval', 'approved', 'rejected', 'cancelled', 'postponed'],
-      default: 'draft',
+      enum: ["draft", "pending_approval", "approved", "rejected", "cancelled", "postponed", "suspended"],
+      default: "draft",
     },
     rejectionReason: {
       type: String,
       trim: true,
     },
+    suspendedReason: {
+      type: String,
+      trim: true,
+    },
 
-    // Denormalized flag for fast filtering (Explore, admin dashboard) without
-    // joining to Promotion on every query. Source of truth for promotion
-    // details lives in the Promotion collection, referenced by promotionId.
     isPromoted: {
       type: Boolean,
       default: false,
     },
     promotionId: {
       type: Schema.Types.ObjectId,
-      ref: 'Promotion',
+      ref: "Promotion",
     },
 
     reservationsCount: {
@@ -161,10 +166,7 @@ const EventSchema = new Schema<IEvent>(
       default: 0,
       min: 0,
     },
-    // Denormalized from the cheapest active TicketType (0 for free events, which
-    // have none). Kept in sync by ticketType.controller.ts on every create/update —
-    // exists so Explore's price filter/sort can query Event directly instead of
-    // joining to TicketType on every request.
+   
     minPrice: {
       type: Number,
       default: 0,
@@ -184,20 +186,23 @@ const EventSchema = new Schema<IEvent>(
     timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
-  }
-)
+  },
+);
 
 // Indexes — support Explore/search, organizer dashboard, featured placement,
 // and admin review of promotion requests (via Promotion collection, not here)
-EventSchema.index({ organizer: 1, createdAt: -1 })
-EventSchema.index({ status: 1, startDate: 1 })
-EventSchema.index({ category: 1, startDate: 1 })
-EventSchema.index({ 'venue.city': 1 })
-EventSchema.index({ isPromoted: -1, startDate: 1 })
-EventSchema.index({ status: 1, minPrice: 1 })
-EventSchema.index({ promotionId: 1 })
-EventSchema.index({ title: 'text', description: 'text' })
+EventSchema.index({ organizer: 1, createdAt: -1 });
+EventSchema.index({ status: 1, startDate: 1 });
+EventSchema.index({ category: 1, startDate: 1 });
+EventSchema.index({ "venue.city": 1 });
+EventSchema.index({ isPromoted: -1, startDate: 1 });
+EventSchema.index({ status: 1, minPrice: 1 });
+EventSchema.index({ promotionId: 1 });
+EventSchema.index({ title: "text", description: "text" });
 
-const Event = mongoose.models.Event || mongoose.model<IEvent>('Event', EventSchema, 'events')
+// Export pattern — use existing model or create new one
+const Event =
+  mongoose.models.Event ||
+  mongoose.model<IEvent>("Event", EventSchema, "events");
 
-export default Event
+export default Event;
