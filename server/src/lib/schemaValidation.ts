@@ -58,23 +58,60 @@ const venueSchema = z.object({
   state: z.string().trim().optional(),
 })
 
-export const createEventSchema = z.object({
-  title: z.string().trim().min(3, 'Title must be at least 3 characters'),
-  description: z.string().trim().min(10, 'Description must be at least 10 characters'),
-  category: z.string().trim().min(1, 'category is required'),
-  type: z.enum(['free', 'paid']),
-  coverImage: z.string().trim().url().optional(),
-  venue: venueSchema,
-  startDate: z.coerce.date(),
-  endDate: z.coerce.date().optional(),
-  capacity: z.number().int().positive().optional(),
-  refundPolicy: z
-    .object({
-      type: z.enum(['no-refunds', 'refund-until-days-before']),
-      daysBefore: z.number().int().min(0).optional(),
-    })
-    .optional(),
-})
+
+export const createEventSchema = z
+  .object({
+    title: z.string().trim().min(3, 'Title must be at least 3 characters'),
+    description: z.string().trim().min(10, 'Description must be at least 10 characters'),
+    category: z.string().trim().min(1, 'Category is required'),
+    type: z.enum(['free', 'paid']),
+    coverImage: z.string().trim().url().optional(),
+    venue: venueSchema,
+    startDate: z.coerce.date(),
+    endDate: z.coerce.date().optional(),
+    capacity: z.number().int().positive().optional(),
+    refundPolicy: z
+      .object({
+        type: z.enum(['no-refunds', 'refund-until-days-before']),
+        daysBefore: z.number().int().min(0).optional(),
+      })
+      .optional(),
+  })
+  .refine(
+    data => !data.endDate || data.endDate >= data.startDate,
+    {
+      message: 'End date must be after or equal to the start date.',
+      path: ['endDate'],
+    }
+  )
+  .refine(
+    data =>
+      !data.refundPolicy ||
+      data.refundPolicy.type === 'no-refunds' ||
+      data.refundPolicy.daysBefore !== undefined,
+    {
+      message: 'daysBefore is required when using refund-until-days-before.',
+      path: ['refundPolicy', 'daysBefore'],
+    }
+  )
+
+// export const createEventSchema = z.object({
+//   title: z.string().trim().min(3, 'Title must be at least 3 characters'),
+//   description: z.string().trim().min(10, 'Description must be at least 10 characters'),
+//   category: z.string().trim().min(1, 'category is required'),
+//   type: z.enum(['free', 'paid']),
+//   coverImage: z.string().trim().url().optional(),
+//   venue: venueSchema,
+//   startDate: z.coerce.date(),
+//   endDate: z.coerce.date().optional(),
+//   capacity: z.number().int().positive().optional(),
+//   refundPolicy: z
+//     .object({
+//       type: z.enum(['no-refunds', 'refund-until-days-before']),
+//       daysBefore: z.number().int().min(0).optional(),
+//     })
+//     .optional(),
+// })
 
 export const updateEventSchema = createEventSchema.partial()
 
