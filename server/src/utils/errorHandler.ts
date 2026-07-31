@@ -1,15 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import { ValidationError } from './validation.js'
 
 export function errorHandler(err: any, req: Request, res: Response, next: NextFunction) {
   let statusCode = 500;
   let message = 'Internal Server Error';
 
-  if (err instanceof ValidationError) {
-    statusCode = 400;
-    message = err.details.errors.map(e => e.message).join(', ');
-  } else if (err.message) {
-    // You can map custom errors here
+  // Generic error handling based on the error's message property
+  if (err.message) {
     statusCode = err.statusCode || 400;
     message = err.message;
   }
