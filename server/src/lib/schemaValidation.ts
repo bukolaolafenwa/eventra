@@ -14,7 +14,7 @@ export const verifyEmailSchema = z.object({
 })
 
 export const resendOtpSchema = z.object({
-  email: z.string().trim().toLowerCase().email('Invalid email addresss'),
+  email: z.string().trim().toLowerCase().email('Invalid email address'),
 })
 
 export const loginSchema = z.object({
