@@ -3,13 +3,23 @@ import mongoose, { Document, Schema } from 'mongoose'
 
 export interface IOrganizerProfile {
   businessName?: string
+  category?: string
+  city?: string
+  contactPhone?: string
+  publicEmail?: string
+  bio?: string
   bankName?: string
   bankCode?: string
   accountNumber?: string
   accountName?: string
   isPayoutReady: boolean
-  approvalStatus: 'pending' | 'approved' | 'rejected'
+  // 'draft' — onboarding wizard in progress, not yet submitted (not shown
+  // to admins). 'pending' — submitted, awaiting admin review. Set by
+  // submitOrganizerProfileForReview, not by every profile edit.
+  approvalStatus: 'draft' | 'pending' | 'approved' | 'rejected'
   paystackRecipientCode?: string
+  agreedToTerms?: boolean
+  submittedAt?: Date
 }
 
 export interface IUser extends Document {
@@ -19,7 +29,11 @@ export interface IUser extends Document {
   email: string
   password: string
   phone: string
-
+  city?: string
+  avatarUrl?: string
+  avatarPublicId?: string
+  
+  
   role: 'attendee' | 'organizer' | 'admin'
 
   isVerified: boolean
@@ -51,50 +65,27 @@ export interface IUser extends Document {
 
 const OrganizerProfileSchema = new Schema<IOrganizerProfile>(
   {
-    businessName: {
-      type: String,
-      trim: true,
-    },
-
-    bankName: {
-      type: String,
-      trim: true,
-    },
-
-    bankCode: {
-      type: String,
-      trim: true,
-    },
-
-    accountNumber: {
-      type: String,
-      trim: true,
-    },
-
-    accountName: {
-      type: String,
-      trim: true,
-    },
-
-    isPayoutReady: {
-      type: Boolean,
-      default: false,
-    },
-
+    businessName: { type: String, trim: true },
+    category: { type: String, trim: true },
+    city: { type: String, trim: true },
+    contactPhone: { type: String, trim: true },
+    publicEmail: { type: String, trim: true, lowercase: true },
+    bio: { type: String, trim: true, maxlength: 280 },
+    bankName: { type: String, trim: true },
+    bankCode: { type: String, trim: true },
+    accountNumber: { type: String, trim: true },
+    accountName: { type: String, trim: true },
+    isPayoutReady: { type: Boolean, default: false },
     approvalStatus: {
       type: String,
-      enum: ['pending', 'approved', 'rejected'],
-      default: 'pending',
+      enum: ['draft', 'pending', 'approved', 'rejected'],
+      default: 'draft',
     },
-
-    paystackRecipientCode: {
-      type: String,
-      trim: true,
-    },
+    paystackRecipientCode: { type: String, trim: true },
+    agreedToTerms: { type: Boolean, default: false },
+    submittedAt: { type: Date },
   },
-  {
-    _id: false,
-  }
+  { _id: false }
 )
 
 const UserSchema = new Schema<IUser>(
@@ -123,6 +114,17 @@ const UserSchema = new Schema<IUser>(
       type: String,
       required: true,
       trim: true,
+    },
+ city: {
+      type: String,
+      trim: true,
+    },
+  avatarUrl: {
+      type: String,
+    },
+    avatarPublicId: {
+      type: String,
+      select: false, // internal Cloudinary bookkeeping, never needs to leave the server
     },
 
     role: {
@@ -240,8 +242,7 @@ UserSchema.index({
 |--------------------------------------------------------------------------
 */
 UserSchema.pre('save', async function () {
-  if (!this.isModified('password')) return
-
+  if (!this.isModified('password') || !this.password) return
   const salt = await bcrypt.genSalt(10)
   this.password = await bcrypt.hash(this.password, salt)
 })
