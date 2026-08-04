@@ -9,6 +9,7 @@ import { globalLimiter } from './middlewares/rateLimit.middleware.js'
 import emailRoutes from './routes/email.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import userRoutes from './routes/user.routes.js'
+import organizerRoutes from './routes/organizer.routes.js'
 
 import {
   appErrorHandler,
@@ -123,6 +124,8 @@ app.get('/health', (req: Request, res: Response) => {
 // Routes
 app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/users', userRoutes)
+// Use the organizer routes
+app.use('/api/v1/organizers', organizerRoutes);
 
 
 // Handle 404
