@@ -6,7 +6,9 @@ import logger, { logError } from './config/logger.js'
 import createSessionMiddleware from './config/session.js'
 import { globalLimiter } from './middlewares/rateLimit.middleware.js'
 import emailRoutes from './routes/email.routes.js'
-
+import categoryRoutes from './routes/category.routes.js'
+// ...
+import dns from 'node:dns';
 import {
   appErrorHandler,
   createExpressLogger,
@@ -15,6 +17,7 @@ import {
 } from './middlewares/error.middleware.js'
 
 
+dns.setServers(['8.8.8.8', '1.1.1.1']);
 
 declare global {
   namespace Express {
@@ -39,7 +42,7 @@ const app = express()
 
 setupGlobalErrorHandlers()
 
-// lean path - cron doesn't need CORS, sesions or body 
+// lean path - cron doesn't need CORS, sesions or body
 app.use('/api', emailRoutes)
 
 // CORS configuration
@@ -73,6 +76,9 @@ app.use(globalLimiter) // Apply rate limiting to all requests
 app.use(express.json({ limit: '25mb' }))
 app.use(express.urlencoded({ extended: true, limit: '25mb' }))
 app.disable('x-powered-by')
+
+app.use('/api/v1/categories', categoryRoutes)
+
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   req.requestTime = new Date().toISOString()
