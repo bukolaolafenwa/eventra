@@ -80,15 +80,15 @@ export const lineupMemberSchema = z.object({
 })
 
 export const updateEventLineupSchema = z.object({
-  lineup: z.array(lineupMemberSchema).max(30, 'Lineup can have at most 30 entries'),
+  lineup: z
+    .array(lineupMemberSchema)
+    .max(30, 'Lineup can have at most 30 entries'),
 })
 
-
-
-export const createEventSchema = z.object({
+const eventSchema = z.object({
   title: z.string().trim().min(3, 'Title must be at least 3 characters'),
   description: z.string().trim().min(10, 'Description must be at least 10 characters'),
-  category: z.string().trim().min(1, 'category is required'),
+  category: z.string().trim().min(1, 'Category is required'),
   type: z.enum(['free', 'paid']),
   coverImage: z.string().trim().url().optional(),
   venue: venueSchema,
@@ -101,11 +101,34 @@ export const createEventSchema = z.object({
       daysBefore: z.number().int().min(0).optional(),
     })
     .optional(),
-  // Whole-array replace on every save — organizer submits the current full
-  // lineup each time rather than individual add/remove diffs. Simpler
-  // contract, and Mongo assigns fresh _ids to any new entries regardless.
-  lineup: z.array(lineupMemberSchema).max(30, 'Lineup can have at most 30 entries').optional(),
+
+      // Whole-array replace on every save — organizer submits the current full
+  // lineup each time rather than individual add/remove diffs.
+  lineup: z
+    .array(lineupMemberSchema)
+    .max(30, 'Lineup can have at most 30 entries')
+    .optional(),
 })
+
+export const createEventSchema = eventSchema
+  .refine(
+    data => !data.endDate || data.endDate >= data.startDate,
+    {
+      message: 'End date must be after or equal to the start date.',
+      path: ['endDate'],
+    }
+  )
+  .refine(
+    data =>
+      !data.refundPolicy ||
+      data.refundPolicy.type === 'no-refunds' ||
+      data.refundPolicy.daysBefore !== undefined,
+    {
+      message: 'daysBefore is required when using refund-until-days-before.',
+      path: ['refundPolicy', 'daysBefore'],
+    }
+  )
+
 
 // export const createEventSchema = z.object({
 //   title: z.string().trim().min(3, 'Title must be at least 3 characters'),
@@ -125,7 +148,31 @@ export const createEventSchema = z.object({
 //     .optional(),
 // })
 
-export const updateEventSchema = createEventSchema.partial()
+// export const updateEventSchema = createEventSchema.partial()
+
+export const updateEventSchema = eventSchema
+  .partial()
+  .refine(
+    data =>
+      !data.startDate ||
+      !data.endDate ||
+      data.endDate >= data.startDate,
+    {
+      message: 'End date must be after or equal to the start date.',
+      path: ['endDate'],
+    }
+  )
+  .refine(
+    data =>
+      !data.refundPolicy ||
+      data.refundPolicy.type === 'no-refunds' ||
+      data.refundPolicy.daysBefore !== undefined,
+    {
+      message: 'daysBefore is required when using refund-until-days-before.',
+      path: ['refundPolicy', 'daysBefore'],
+    }
+  )
+  
 
 export const createTicketTypeSchema = z.object({
   name: z.string().trim().min(1, 'name is required'),

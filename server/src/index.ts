@@ -9,6 +9,8 @@ import { globalLimiter } from './middlewares/rateLimit.middleware.js'
 import emailRoutes from './routes/email.routes.js'
 import authRoutes from './routes/auth.routes.js'
 import userRoutes from './routes/user.routes.js'
+import eventRoutes from './routes/event.routes.js'
+import categoryRoutes from './routes/category.routes.js'
 
 import {
   appErrorHandler,
@@ -122,8 +124,9 @@ app.get('/health', (req: Request, res: Response) => {
 })
 // Routes
 app.use('/api/v1/auth', authRoutes)
+app.use('/api/v1/events', eventRoutes)
 app.use('/api/v1/users', userRoutes)
-
+app.use('/api/v1/categories', categoryRoutes)
 
 // Handle 404
 app.use(notFoundRoutes)
@@ -139,7 +142,7 @@ const startServer = async (): Promise<void> => {
     await connectDB()
     server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Server running in ${env.NODE_ENV} mode on port ${PORT}`)
-      logger.info(`http://localhost: ${PORT}`)
+      logger.info(`http://localhost:${PORT}`)
     })
     //HANDLE unhandled promise rejections
     process.on('unhandledRejection', (reason: unknown) => {
