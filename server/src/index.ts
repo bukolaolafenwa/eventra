@@ -19,6 +19,12 @@ import {
   setupGlobalErrorHandlers,
 } from './middlewares/error.middleware.js'
 
+ const connectionStates: Record<number, string> = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting',
+  }
 
 
 declare global {
@@ -110,18 +116,55 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // })
 
 
+// app.get('/health', (req: Request, res: Response) => {
+//   res.status(200).json({
+//     status: 'success',
+//     message: 'Server is healthy',
+//     environment: env.NODE_ENV,
+//     timestamp: req.requestTime,
+//     uptime: process.uptime(),
+//     database:
+//       mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+//     version: process.env.npm_package_version || '1.0.0',
+//   })
+// })
+
+// health check endpoint for serverless environments like Vercel
 app.get('/health', (req: Request, res: Response) => {
+  const readyState = mongoose.connection.readyState
+
   res.status(200).json({
     status: 'success',
     message: 'Server is healthy',
     environment: env.NODE_ENV,
     timestamp: req.requestTime,
     uptime: process.uptime(),
-    database:
-      mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     version: process.env.npm_package_version || '1.0.0',
+    node: process.version,
+    pid: process.pid,
+    database: {
+      status: connectionStates[readyState] ?? 'unknown',
+      readyState,
+    },
   })
 })
+
+
+/**
+ * Root route
+ */
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'Welcome to the Eventra API 🚀',
+    version: process.env.npm_package_version || '1.0.0',
+    environment: env.NODE_ENV,
+    health: '/health',
+    api: '/api/v1',
+  })
+})
+
+
 // Routes
 app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/events', eventRoutes)

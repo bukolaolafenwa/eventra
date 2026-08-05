@@ -61,13 +61,25 @@ export const createCategory = async (
 // }
 
 
-export const getAllCategories = async () => {
-  return Category.find()
+// export const getAllCategories = async () => {
+//   return Category.find()
+//     .select('-__v')
+//     .sort({ createdAt: -1 })
+//     .lean()
+// }
+
+
+// Makes the service reusable
+export const getAllCategories = async (
+  includeInactive = false
+) => {
+  const filter = includeInactive ? {} : { isActive: true }
+
+  return Category.find(filter)
     .select('-__v')
     .sort({ createdAt: -1 })
     .lean()
 }
-
 
 
 /**
@@ -160,6 +172,40 @@ export const deleteCategory = async (id: string) => {
 
   // Soft delete
   category.isActive = false
+
+  await category.save()
+
+  const updatedCategory = await Category.findById(category._id)
+    .select('-__v')
+    .lean()
+
+  return updatedCategory
+}
+
+
+/**
+ * Restores a deactivated category.
+ */
+export const restoreCategory = async (id: string) => {
+  // Validate ObjectId
+  if (!mongoose.Types.ObjectId.isValid(id)) {
+    throw new Error('Invalid category ID')
+  }
+
+  // Check that the category exists
+  const category = await Category.findById(id)
+
+  if (!category) {
+    throw new Error('Category not found')
+  }
+
+  // Prevent unnecessary updates
+  if (category.isActive) {
+    throw new Error('Category is already active')
+  }
+
+  // Restore
+  category.isActive = true
 
   await category.save()
 
