@@ -38,10 +38,14 @@ const CategorySchema = new Schema<ICategory>(
   }
 )
 
+/**
+ * Indexes
+ */
+// Supports listing active categories alphabetically
+CategorySchema.index({ isActive: 1, name: 1 })
 
-
-CategorySchema.index({ isActive: 1 })
-
-const Category = mongoose.models.Category || mongoose.model<ICategory>('Category', CategorySchema, 'categories')
+const Category =
+  mongoose.models.Category ||
+  mongoose.model<ICategory>('Category', CategorySchema, 'categories')
 
 export default Category
