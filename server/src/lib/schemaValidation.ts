@@ -4,7 +4,11 @@ export const registerSchema = z.object({
   fullname: z.string().trim().min(2, 'Fullname must be at least 2 characters'),
   email: z.string().trim().toLowerCase().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
-  phone: z.string().trim().min(7, 'Invalid phone number'),
+  // Optional here because the organizer sign-up form doesn't collect a
+  // phone number (see the Figma) — enforced as required for attendees at
+  // the client-side schema instead (lib/schema.ts's registerSchema),
+  // since that's a UX choice, not a data-integrity one.
+  phone: z.string().trim().min(7, 'Invalid phone number').optional(),
   role: z.enum(['attendee', 'organizer']).optional(),
 })
 
@@ -45,10 +49,21 @@ export const checkoutSchema = z.object({
 
 export const organizerProfileSchema = z.object({
   businessName: z.string().trim().min(2).optional(),
+  category: z.string().trim().min(1).optional(),
+  city: z.string().trim().min(2).optional(),
+  contactPhone: z.string().trim().min(7).optional(),
+  publicEmail: z.string().trim().toLowerCase().email().optional(),
+  bio: z.string().trim().max(280).optional(),
   bankName: z.string().trim().min(2).optional(),
   bankCode: z.string().trim().min(2).optional(),
   accountNumber: z.string().trim().min(10).max(10).optional(),
   accountName: z.string().trim().min(2).optional(),
+  agreedToTerms: z.boolean().optional(),
+})
+
+export const resolveBankAccountSchema = z.object({
+  accountNumber: z.string().trim().min(10).max(10),
+  bankCode: z.string().trim().min(2),
 })
 
 const venueSchema = z.object({
@@ -58,6 +73,17 @@ const venueSchema = z.object({
   state: z.string().trim().optional(),
 })
 
+export const lineupMemberSchema = z.object({
+  name: z.string().trim().min(1, 'name is required'),
+  role: z.string().trim().min(1, 'role is required'),
+  imageUrl: z.string().trim().url().optional(),
+})
+
+export const updateEventLineupSchema = z.object({
+  lineup: z
+    .array(lineupMemberSchema)
+    .max(30, 'Lineup can have at most 30 entries'),
+})
 
 const eventSchema = z.object({
   title: z.string().trim().min(3, 'Title must be at least 3 characters'),
@@ -75,8 +101,14 @@ const eventSchema = z.object({
       daysBefore: z.number().int().min(0).optional(),
     })
     .optional(),
-})
 
+      // Whole-array replace on every save — organizer submits the current full
+  // lineup each time rather than individual add/remove diffs.
+  lineup: z
+    .array(lineupMemberSchema)
+    .max(30, 'Lineup can have at most 30 entries')
+    .optional(),
+})
 
 export const createEventSchema = eventSchema
   .refine(
@@ -96,7 +128,6 @@ export const createEventSchema = eventSchema
       path: ['refundPolicy', 'daysBefore'],
     }
   )
-
 
 
 // export const createEventSchema = z.object({
@@ -145,10 +176,12 @@ export const updateEventSchema = eventSchema
 
 export const createTicketTypeSchema = z.object({
   name: z.string().trim().min(1, 'name is required'),
+  description: z.string().trim().max(200).optional(),
   price: z.number().min(0),
   quantity: z.number().int().positive(),
   purchaseLimitPerPerson: z.number().int().positive().optional(),
 })
+
 
 export const updateTicketTypeSchema = createTicketTypeSchema.partial().extend({
   isActive: z.boolean().optional(),

@@ -11,28 +11,30 @@ export interface ICategory extends Document {
 
 const CategorySchema = new Schema<ICategory>(
   {
-  name: {
-  type: String,
-  required: true,
-  trim: true,
-  unique: true,
-},
-
-slug: {
-  type: String,
-  required: true,
-  unique: true,
-  lowercase: true,
-  trim: true,
-},
-
-isActive: {
-  type: Boolean,
-  default: true,
-},
+    name: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    // Categories are deactivated rather than deleted, so existing events
+    // that reference a retired category don't break.
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 )
 
