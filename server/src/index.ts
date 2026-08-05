@@ -150,6 +150,21 @@ app.get('/health', (req: Request, res: Response) => {
 })
 
 
+/**
+ * Root route
+ */
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).json({
+    success: true,
+    message: 'Welcome to the Eventra API 🚀',
+    version: process.env.npm_package_version || '1.0.0',
+    environment: env.NODE_ENV,
+    health: '/health',
+    api: '/api/v1',
+  })
+})
+
+
 // Routes
 app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/events', eventRoutes)
