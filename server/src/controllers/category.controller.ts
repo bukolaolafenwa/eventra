@@ -1,5 +1,10 @@
 import type { Request, Response, NextFunction } from 'express'
-import { createCategory, getAllCategories, getCategoryById, updateCategory, deleteCategory, } from '../services/category.service.js'
+import { createCategory, 
+    getAllCategories, 
+    getCategoryById, 
+    updateCategory, 
+    deleteCategory,  
+    restoreCategory, } from '../services/category.service.js'
 import { sendTsRestSuccess } from '../lib/responseHandler.js'
 import type { CreateCategoryInput, UpdateCategoryInput, } from '../types/category.types.js'
 
@@ -45,6 +50,30 @@ export const getAllCategoriesController = async (
     sendTsRestSuccess(res, 200, {
       success: true,
       message: 'Categories retrieved successfully',
+      body: categories,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+
+
+/**
+ * Retrieves all categories (including inactive).
+ * Admin only.
+ */
+export const getAllCategoriesAdminController = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const categories = await getAllCategories(true)
+
+    sendTsRestSuccess(res, 200, {
+      success: true,
+      message: 'All categories retrieved successfully',
       body: categories,
     })
   } catch (error) {
@@ -120,6 +149,31 @@ export const deleteCategoryController = async (
     sendTsRestSuccess(res, 200, {
       success: true,
       message: 'Category deactivated successfully',
+      body: category,
+    })
+  } catch (error) {
+    next(error)
+  }
+}
+
+
+
+/**
+ * Restores a deactivated category.
+ */
+export const restoreCategoryController = async (
+  req: Request<CategoryParams>,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params
+
+    const category = await restoreCategory(id)
+
+    sendTsRestSuccess(res, 200, {
+      success: true,
+      message: 'Category restored successfully',
       body: category,
     })
   } catch (error) {
