@@ -2,21 +2,28 @@
 
 > **Discover events. Book tickets. Arrive with confidence.**
 
-Eventra is a modern event management platform that enables attendees to discover events, reserve free tickets or purchase paid tickets, receive secure QR-code tickets, and enjoy seamless event check-in. Organizers can create and manage events, monitor ticket sales, receive payouts, and promote their events, while administrators oversee platform operations and event approvals.
+Eventra is a modern event management platform that enables attendees to discover events, reserve free tickets or purchase paid tickets, receive secure QR-code tickets, and enjoy seamless event check-in. Organizers can create and manage events, monitor ticket sales, receive payouts, and promote their events, while administrators oversee platform operations, approve organizers and events, and manage platform activities.
 
-> 🚧 **Status:** Under Active Development
-
-This repository contains the Eventra codebase, which is currently under active development. The backend foundation has been established and is being expanded iteratively, while the frontend application will be integrated as development progresses.
+> 🚧 **Status:** Backend MVP Under Active Development
 
 ---
 
-# 📚 About This Project
+# 📚 About
 
 Eventra is being developed as part of the **Tech Studio Academy Full Stack Web Development Internship**.
 
-The project simulates the development of a real-world software product by applying modern software engineering practices—from product requirements and system design to backend development, frontend integration, deployment, and collaborative development using Git and GitHub.
+The project simulates the development of a production-ready software product by applying modern software engineering principles, including:
 
-The objective is to build a scalable, secure, and user-friendly event management platform while demonstrating best practices in software engineering.
+- Clean Architecture
+- RESTful API Design
+- Layered Application Architecture
+- Authentication & Authorization
+- Secure Session Management
+- Backend Scalability
+- Production Deployment
+- Collaborative Git Workflow
+
+The objective is to build a secure, scalable, and user-friendly event management platform while demonstrating industry-standard backend engineering practices.
 
 ---
 
@@ -25,13 +32,14 @@ The objective is to build a scalable, secure, and user-friendly event management
 | Property | Value |
 |----------|-------|
 | **Project Name** | Eventra |
-| **Status** | 🚧 In Development |
+| **Status** | 🚧 Backend MVP In Progress |
 | **Project Type** | Full Stack Web Application |
 | **Industry** | Event Management |
-| **Backend** | Node.js, Express.js, TypeScript |
+| **Backend** | Node.js + Express.js + TypeScript |
 | **Frontend** | React + TypeScript *(Coming Soon)* |
-| **Database** | MongoDB |
+| **Database** | MongoDB Atlas |
 | **Deployment** | Vercel |
+| **Architecture** | Layered (Routes → Controllers → Services → Models) |
 
 ---
 
@@ -39,11 +47,32 @@ The objective is to build a scalable, secure, and user-friendly event management
 
 Eventra aims to simplify event discovery, ticketing, and event management through a secure, scalable, and intuitive platform.
 
-The platform is designed to serve three primary user groups:
+The platform serves three primary user groups:
 
-- **Attendees** – Discover events, reserve free tickets, purchase paid tickets, and manage digital tickets.
-- **Organizers** – Create and manage events, monitor ticket sales, validate attendees, and receive payouts.
-- **Administrators** – Oversee platform operations, approve organizers and events, manage users, and monitor platform performance.
+### 👤 Attendees
+
+- Discover events
+- Search and filter events
+- Reserve free tickets
+- Purchase paid tickets
+- Manage digital tickets
+- View booking history
+
+### 🏢 Organizers
+
+- Create and manage events
+- Monitor ticket sales
+- Validate attendees
+- Manage payouts
+- Promote events
+
+### 🛡 Administrators
+
+- Manage users
+- Approve organizers
+- Approve events
+- Manage categories
+- Monitor platform activities
 
 ---
 
@@ -54,10 +83,12 @@ The platform is designed to serve three primary user groups:
 - Node.js
 - Express.js
 - TypeScript
-- MongoDB (Mongoose)
-- Redis
-- Nodemailer
-- Express Rate Limiter
+- MongoDB Atlas
+- Mongoose
+- Express Session
+- MemCachier
+- Nodemailer (Brevo)
+- Express Rate Limit
 - Cron Jobs
 - Vercel
 
@@ -88,10 +119,11 @@ eventra/
 │   │   ├── models/
 │   │   ├── routes/
 │   │   ├── services/
+│   │   ├── types/
+│   │   ├── utils/
 │   │   └── index.ts
 │   │
 │   ├── package.json
-│   ├── package-lock.json
 │   ├── tsconfig.json
 │   ├── vercel.json
 │   └── .gitignore
@@ -102,108 +134,120 @@ eventra/
 
 ---
 
-# 🏗 Current Development Progress
+# 🏗 Architecture
 
-The project is currently in its foundation phase.
+Eventra follows a layered architecture.
 
-The following backend infrastructure has been implemented to establish a scalable architecture for future development.
+```text
+Client
+   │
+Routes
+   │
+Controllers
+   │
+Services
+   │
+Models
+   │
+MongoDB
+```
+
+This architecture provides:
+
+- Separation of concerns
+- Maintainability
+- Scalability
+- Reusability
+- Testability
+
+---
+
+# ✅ Current Backend Features
+
+## Authentication & Authorization
+
+- User registration
+- User login
+- Session authentication
+- Role-Based Access Control (RBAC)
+- Admin authorization
+
+---
+
+## Users
+
+- User profile management
+- Session verification
+
+---
+
+## Events
+
+- Event CRUD APIs
+- Organizer event management
+
+---
+
+## Categories
+
+- Create category
+- Retrieve active categories
+- Retrieve category by ID
+- Update category
+- Soft delete categories
+- Restore categories
+- Retrieve all categories (Admin)
+- Automatic slug generation
+
+---
+
+## Security
+
+- Session middleware
+- Global error handling
+- Rate limiting
+- Schema validation
+- Secure environment configuration
+
+---
 
 ## Infrastructure
 
-- Express.js server setup
-- TypeScript configuration
-- MongoDB database connection
-- Environment configuration
+- MongoDB connection management
+- Optimized serverless connection reuse
+- Health endpoint
 - Structured logging
-- Session configuration
-
-## Middleware
-
-- Global error handling
-- Rate limiting
 - Cache middleware
-
-## Email Infrastructure
-
-- Email controller
-- Email service
-- Email templates
 - Email queue
-- Email cron processing
-- Email sending utility
-
-## Utilities
-
-- Response handler
-- Try/Catch wrapper
-- Cache utilities
-
-## Deployment
-
-- Vercel configuration
-- Environment variable support
-
-> **Note:** The backend is still under active development. Core business functionality such as authentication, event management, ticketing, payments, user management, and QR-code workflows will be implemented in subsequent development phases.
+- Cron jobs
+- Production deployment on Vercel
 
 ---
 
-# 🚧 Planned MVP Features
+# 🌐 API Endpoints
 
-## 👤 Attendee
+## Public
 
-- User registration & authentication
-- Browse and search events
-- Event filtering
-- RSVP for free events
-- Purchase paid tickets
-- QR-code ticket generation
-- Saved events
-- Profile management
-- Order history
+```http
+GET /health
+GET /
+GET /api/v1/categories
+GET /api/v1/categories/:id
+```
 
 ---
 
-## 🏢 Organizer Dashboard
+## Administrator
 
-- Organizer registration
-- Create and manage events
-- Ticket management
-- Sales dashboard
-- Attendee management
-- QR-code check-in
-- Offline check-in
-- Event promotion
-- Payout management
+```http
+POST   /api/v1/categories
+PATCH  /api/v1/categories/:id
+DELETE /api/v1/categories/:id
+PATCH  /api/v1/categories/:id/restore
+GET    /api/v1/categories/admin
+```
 
----
-
-## 🛡 Administrator Dashboard
-
-- Organizer approval
-- Event approval
-- User management
-- Event category management
-- Refund processing
-- Promotion approval
-- Platform analytics
-
----
-
-## 💳 Payments
-
-- Paystack integration
-- Platform commission
-- Organizer payouts
-- Payment verification
-
----
-
-## 🎫 Ticketing
-
-- QR code generation
-- Ticket validation
-- One-time QR check-in
-- Offline ticket scanning
+> Authentication, User and Event APIs are also available and continue to evolve as development progresses.
 
 ---
 
@@ -215,11 +259,15 @@ The following backend infrastructure has been implemented to establish a scalabl
 git clone https://github.com/bukolaolafenwa/eventra.git
 ```
 
-## Navigate to the backend
+---
+
+## Navigate into the backend
 
 ```bash
 cd eventra/server
 ```
+
+---
 
 ## Install dependencies
 
@@ -227,23 +275,50 @@ cd eventra/server
 npm install
 ```
 
+---
+
 ## Configure Environment Variables
 
 Create a `.env` file inside the `server` directory.
 
 ```env
-PORT=
+# Server
+PORT=4000
+NODE_ENV=development
+
+# Database
 MONGO_URI=
-JWT_SECRET=
-REDIS_URL=
+DATABASE_NAME=
+
+# Session
+SESSION_SECRET=
+SESSION_MAX_AGE=
+CLIENT_URL=
+
+# Email (Brevo)
+BREVO_API_KEY=
+EMAIL_OWNER=
+
+# Cron
 CRON_SECRET=
-EMAIL_HOST=
-EMAIL_PORT=
-EMAIL_USER=
-EMAIL_PASSWORD=
+
+# Cache (MemCachier)
+MEMCACHIER_SERVERS=
+MEMCACHIER_USERNAME=
+MEMCACHIER_PASSWORD=
+
+# Bootstrap Admin (Optional)
+ADMIN_NAME=
+ADMIN_EMAIL=
+ADMIN_PASSWORD=
+ADMIN_PHONE=
 ```
 
-Update the variables with your own development credentials.
+> **Note**
+>
+> The **Bootstrap Admin** variables are optional. They are used to create an initial administrator account during application setup and are primarily intended for development or first-time deployment.
+
+---
 
 ## Start the development server
 
@@ -251,72 +326,92 @@ Update the variables with your own development credentials.
 npm run dev
 ```
 
-The backend will be available at:
+The backend runs at:
 
 ```text
 http://localhost:4000
+```
+
+Health endpoint:
+
+```text
+http://localhost:4000/health
 ```
 
 ---
 
 # 🔄 Development Workflow
 
-This project follows a collaborative Git workflow.
-
-Create a feature branch:
+Create a feature branch.
 
 ```bash
 git checkout -b feature/your-feature
 ```
 
-Commit your changes:
+Commit changes.
 
 ```bash
 git add .
-git commit -m "Implement your feature"
+git commit -m "feat: implement feature"
 ```
 
-Push your branch:
+Push to GitHub.
 
 ```bash
 git push origin feature/your-feature
 ```
 
-Open a Pull Request for review before merging into `main`.
+Open a Pull Request before merging into the protected branch.
 
 ---
 
 # 📌 Development Roadmap
 
-## Backend
+## ✅ Completed
 
-- ✅ Backend project setup
-- ✅ Project architecture
-- ✅ Database configuration
-- ✅ Middleware foundation
-- ✅ Email infrastructure
-- ⏳ Authentication & Authorization
-- ⏳ User Management
-- ⏳ Event Management APIs
-- ⏳ Ticket Management
-- ⏳ QR Code Generation
-- ⏳ Payment Integration
-- ⏳ Organizer APIs
-- ⏳ Administrator APIs
+- Backend project setup
+- Layered architecture
+- MongoDB integration
+- Environment configuration
+- Session management
+- Authentication
+- Authorization
+- User APIs
+- Event APIs
+- Category management
+- Soft delete & restore
+- Email infrastructure
+- Health endpoint
+- Production deployment
 
-## Frontend
+---
 
-- ⏳ Frontend project setup
-- ⏳ Landing page
-- ⏳ Authentication pages
-- ⏳ Event discovery
-- ⏳ Organizer dashboard
-- ⏳ Administrator dashboard
+## 🚧 In Progress
 
-## Deployment
+- Ticket management
+- QR code generation
+- Organizer dashboard
+- Payment integration
+- Notification system
 
-- ⏳ Production deployment
-- ⏳ CI/CD pipeline
+---
+
+## 📋 Planned
+
+- React frontend
+- Admin dashboard
+- CI/CD pipeline
+- Swagger / OpenAPI documentation
+- Automated testing
+
+---
+
+# 🚀 Releases
+
+| Version | Description |
+|----------|-------------|
+| **v0.1.0** | Initial Production Release |
+| **v0.2.0** | Production Infrastructure & Health Endpoint Improvements |
 
 ---
 
@@ -326,23 +421,8 @@ Contributions are welcome.
 
 1. Fork the repository.
 2. Create a feature branch.
-
-```bash
-git checkout -b feature/your-feature
-```
-
 3. Commit your changes.
-
-```bash
-git commit -m "Implement your feature"
-```
-
 4. Push your branch.
-
-```bash
-git push origin feature/your-feature
-```
-
 5. Open a Pull Request.
 
 ---
