@@ -2,6 +2,8 @@ import mongoose, { ConnectOptions } from 'mongoose'
 import { env } from './keys.js'
 import logger, { logError } from './logger.js'
 
+let connectionPromise: Promise<typeof mongoose> | null = null
+
 
 const connectionOptions: ConnectOptions = {
   dbName: env.DATABASE_NAME,
@@ -14,6 +16,15 @@ const connectionOptions: ConnectOptions = {
   monitorCommands: env.NODE_ENV === 'development',
 }
 
+// export const connectDB = async (): Promise<void> => {
+//   // Already connected
+//   if (mongoose.connection.readyState === 1) {
+//     logger.info('Using existing MongoDB connection')
+//     return
+//   }
+
+//   try {
+
 export const connectDB = async (): Promise<void> => {
   // Already connected
   if (mongoose.connection.readyState === 1) {
@@ -21,11 +32,26 @@ export const connectDB = async (): Promise<void> => {
     return
   }
 
+  // Connection already in progress
+  if (mongoose.connection.readyState === 2) {
+    logger.info('MongoDB connection already in progress')
+    return
+  }
+
   try {
-    const conn = await mongoose.connect(
-      env.MONGO_URI,
-      connectionOptions
-    )
+    // const conn = await mongoose.connect(
+    //   env.MONGO_URI,
+    //   connectionOptions
+    // )
+
+    if (!connectionPromise) {
+  connectionPromise = mongoose.connect(
+    env.MONGO_URI,
+    connectionOptions
+  )
+}
+
+    const conn = await connectionPromise
 
     logger.info(`MongoDB Connected: ${conn.connection.host}`)
 
@@ -35,14 +61,24 @@ export const connectDB = async (): Promise<void> => {
         logger.error('MongoDB connection error', err)
       })
 
-      mongoose.connection.on('disconnected', () => {
-        logger.warn('MongoDB disconnected')
-      })
+      // mongoose.connection.on('disconnected', () => {
+      //   logger.warn('MongoDB disconnected')
+      // })
+    mongoose.connection.on('disconnected', () => {
+    logger.warn('MongoDB disconnected')
+    connectionPromise = null
+})
     }
+  // } catch (error) {
+  //   logError(error, 'MongoDB connection failed')
+  //   throw error
+  // }
+
   } catch (error) {
-    logError(error, 'MongoDB connection failed')
-    throw error
-  }
+  connectionPromise = null
+  logError(error, 'MongoDB connection failed')
+  throw error
+}
 }
 
 //handle graceful shutdown
