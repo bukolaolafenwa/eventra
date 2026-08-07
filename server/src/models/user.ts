@@ -22,17 +22,24 @@ export interface IOrganizerProfile {
   submittedAt?: Date
 }
 
+export interface INotificationPreferences {
+  eventReminders: boolean
+  weeklyPicks: boolean
+  organizerUpdates: boolean
+}
+
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId
 
   fullname: string
   email: string
   password: string
+    googleId?: string
   phone: string
   city?: string
   avatarUrl?: string
   avatarPublicId?: string
-  
+  notificationPreferences: INotificationPreferences
   
   role: 'attendee' | 'organizer' | 'admin'
 
@@ -104,15 +111,31 @@ const UserSchema = new Schema<IUser>(
       trim: true,
     },
 
-    password: {
+      password: {
       type: String,
-      required: true,
+      // Google-created accounts never set a password — required is a
+      // function so this only applies to accounts that signed up the
+      // normal way. See matchPassword and googleAuth in auth.controller.ts
+      // for the two places that read this and need to handle it being unset.
+      required: function (this: IUser) {
+        return !this.googleId
+      },
       select: false,
+    },
+       googleId: {
+      type: String,
+      unique: true,
+      sparse: true, // most users won't have one — sparse means the unique index ignores documents missing this field entirely
     },
 
     phone: {
       type: String,
-      required: true,
+      required: function (this: IUser) {
+        // Google sign-ups never collect a phone number, and neither does
+        // the organizer registration form — only a manual attendee
+        // sign-up needs one.
+        return !this.googleId && this.role !== 'organizer'
+      },
       trim: true,
     },
  city: {
@@ -125,6 +148,12 @@ const UserSchema = new Schema<IUser>(
     avatarPublicId: {
       type: String,
       select: false, // internal Cloudinary bookkeeping, never needs to leave the server
+    },
+
+    notificationPreferences: {
+      eventReminders: { type: Boolean, default: true },
+      weeklyPicks: { type: Boolean, default: true },
+      organizerUpdates: { type: Boolean, default: false },
     },
 
     role: {
