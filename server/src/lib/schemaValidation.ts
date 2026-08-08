@@ -21,6 +21,11 @@ export const resendOtpSchema = z.object({
   email: z.string().trim().toLowerCase().email('Invalid email address'),
 })
 
+export const googleAuthSchema = z.object({
+  accessToken: z.string().min(1, 'accessToken is required'),
+  role: z.enum(['attendee', 'organizer']).optional(),
+})
+
 export const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email('Invalid email address'),
   password: z.string().min(1, 'Password is required'),

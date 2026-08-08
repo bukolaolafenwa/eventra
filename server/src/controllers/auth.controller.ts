@@ -5,6 +5,8 @@ import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import { generateOTP, sanitizeUser } from '../lib/utils.js'
 import User from '../models/user.js'
 import { EmailService } from '../services/email.service.js'
+import { GoogleAuthService } from '../services/google-auth.service.js'
+
 
 const OTP_TTL_MS = 15 * 60 * 1000 // 15 minutes, matches the email copy
 const MAX_OTP_ATTEMPTS = 5 // Maximum OTP verification attempts before requiring a new OTP
@@ -164,6 +166,66 @@ export const resendOtp = tryCatchWrapper(async (req: Request, res: Response) => 
   return sendTsRestSuccess<undefined>(res, 200, {
     success: true,
     message: 'A new verification code has been sent to your email',
+  })
+})
+
+export const googleAuth = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { accessToken, role } = req.body
+
+  let profile
+  try {
+    profile = await GoogleAuthService.verifyAccessToken(accessToken)
+  } catch (error: any) {
+    return sendTsRestError(res, 401, error.message || 'Google sign-in failed')
+  }
+
+  if (!profile.emailVerified) {
+    return sendTsRestError(res, 401, "Your Google account's email isn't verified")
+  }
+
+  let user = await User.findOne({ googleId: profile.sub })
+
+  if (!user) {
+    // Someone who registered normally with this email, now trying Google
+    // for the first time — link it to the existing account rather than
+    // creating a second, disconnected one with the same email address.
+    user = await User.findOne({ email: profile.email })
+    if (user) {
+      user.googleId = profile.sub
+      if (!user.avatarUrl && profile.picture) user.avatarUrl = profile.picture
+      await user.save()
+    }
+  }
+
+  if (!user) {
+    user = await User.create({
+      fullname: profile.name,
+      email: profile.email,
+      googleId: profile.sub,
+      avatarUrl: profile.picture,
+      // Only matters for a brand-new account — if this email already
+      // exists (linked above) we keep whatever role it already has.
+      // "Sign up with Google" on the organizer register page sends
+      // role: 'organizer' here so it doesn't silently create an
+      // attendee account instead.
+      role: role === 'organizer' ? 'organizer' : 'attendee',
+      // Google already verified this email address — our own OTP flow
+      // would be redundant friction, not extra security.
+      isVerified: true,
+    })
+  }
+
+  if (user.isSuspended) {
+    return sendTsRestError(res, 403, 'This account has been suspended. Contact support for help')
+  }
+
+  req.session.userId = user._id.toString()
+  req.session.role = user.role
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Signed in with Google',
+    body: sanitizeUser(user.toObject()),
   })
 })
 
