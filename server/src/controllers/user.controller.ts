@@ -2,13 +2,51 @@ import { Request, Response } from 'express'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import { sanitizeUser } from '../lib/utils.js'
-
 import User from '../models/user.js'
+import { CloudinaryService } from '../services/cloudinary.service.js'
+
+export const uploadAvatar = tryCatchWrapper(async (req: Request, res: Response) => {
+  if (!req.file) {
+    return sendTsRestError(res, 400, 'No image file provided (expected field name "image")')
+  }
+
+  const user = await User.findById(req.session.userId).select('+avatarPublicId')
+  if (!user) {
+    return sendTsRestError(res, 404, 'User not found')
+  }
+
+  const previousPublicId = user.avatarPublicId
+
+  let uploaded
+  try {
+    uploaded = await CloudinaryService.uploadAvatar(req.file.buffer)
+  } catch (error: any) {
+    return sendTsRestError(res, 502, error.message || 'Avatar upload failed')
+  }
+
+  user.avatarUrl = uploaded.url
+  user.avatarPublicId = uploaded.publicId
+  await user.save()
+
+  // Best-effort — the new avatar is already saved either way, so a failed
+  // cleanup here shouldn't turn into a failed request for the user.
+  if (previousPublicId) {
+    CloudinaryService.deleteImage(previousPublicId)
+  }
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Avatar updated',
+    body: sanitizeUser(user.toObject()),
+  })
+})
 
 export const updateProfile = tryCatchWrapper(async (req: Request, res: Response) => {
-  const { fullname, phone, currentPassword, newPassword } = req.body as {
+  const { fullname, phone, city, notificationPreferences, currentPassword, newPassword } = req.body as {
     fullname?: string
     phone?: string
+    city?: string
+    notificationPreferences?: Partial<{ eventReminders: boolean; weeklyPicks: boolean; organizerUpdates: boolean }>
     currentPassword?: string
     newPassword?: string
   }
@@ -20,6 +58,12 @@ export const updateProfile = tryCatchWrapper(async (req: Request, res: Response)
 
   if (fullname) user.fullname = fullname
   if (phone) user.phone = phone
+  if (city) user.city = city
+  // Partial merge, not overwrite — a toggle for one preference shouldn't
+  // reset the other two to their schema defaults.
+  if (notificationPreferences) {
+    user.notificationPreferences = { ...user.notificationPreferences, ...notificationPreferences }
+  }
 
   if (newPassword) {
     if (!currentPassword) {
@@ -66,7 +110,8 @@ export const listSavedEvents = tryCatchWrapper(async (req: Request, res: Respons
     .populate({
       path: 'savedEvents',
       match: { status: 'approved' },
-      select: 'title slug startDate venue coverImage type',
+      select: 'title slug startDate venue coverImage type category minPrice isPromoted',
+      populate: { path: 'category', select: 'name slug' },
     })
     .lean()
 
@@ -79,4 +124,22 @@ export const listSavedEvents = tryCatchWrapper(async (req: Request, res: Respons
     message: 'Saved events fetched',
     body: user.savedEvents,
   })
+})
+
+// TODO(orders): previously queried Order.find({ buyer: ... }) directly, but
+// the Order model is owned by Person B (Tickets, Checkout & Payments). Swap
+// this stub for either a re-added Order import once that model is stable,
+// or a call into a service Person B exposes.
+export const listOrderHistory = tryCatchWrapper(async (req: Request, res: Response) => {
+  return sendTsRestError(res, 501, 'Order history is not wired up yet (pending payments integration)')
+  // const orders = await Order.find({ buyer: req.session.userId })
+  //   .populate('event', 'title slug startDate coverImage')
+  //   .sort({ createdAt: -1 })
+  //   .lean()
+  //
+  // return sendTsRestSuccess(res, 200, {
+  //   success: true,
+  //   message: 'Order history fetched',
+  //   body: orders,
+  // })
 })

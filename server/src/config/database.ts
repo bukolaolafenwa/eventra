@@ -2,17 +2,8 @@ import mongoose, { ConnectOptions } from 'mongoose'
 import { env } from './keys.js'
 import logger, { logError } from './logger.js'
 
-interface DBConnect {
-  isConnected: boolean
-  retryCount: number
-  maxRetries: number
-}
+let connectionPromise: Promise<typeof mongoose> | null = null
 
-const dbConnection: DBConnect = {
-  isConnected: false,
-  retryCount: 0,
-  maxRetries: 5,
-}
 
 const connectionOptions: ConnectOptions = {
   dbName: env.DATABASE_NAME,
@@ -25,55 +16,69 @@ const connectionOptions: ConnectOptions = {
   monitorCommands: env.NODE_ENV === 'development',
 }
 
+// export const connectDB = async (): Promise<void> => {
+//   // Already connected
+//   if (mongoose.connection.readyState === 1) {
+//     logger.info('Using existing MongoDB connection')
+//     return
+//   }
+
+//   try {
+
 export const connectDB = async (): Promise<void> => {
-  if (dbConnection.isConnected) {
-    logger.info('Using existing MongoDb connection')
+  // Already connected
+  if (mongoose.connection.readyState === 1) {
+    logger.info('Using existing MongoDB connection')
     return
   }
 
-  if (dbConnection.retryCount >= dbConnection.maxRetries) {
-    logger.error('X Max MongoDb connection retries reached')
-    process.exit(1)
+  // Connection already in progress
+  if (mongoose.connection.readyState === 2) {
+    logger.info('MongoDB connection already in progress')
+    return
   }
 
   try {
-    const conn = await mongoose.connect(env.MONGO_URI, connectionOptions)
-    dbConnection.isConnected = conn.connections[0].readyState === 1
-    dbConnection.retryCount = 0 //reset retrycount upon successful connection
+    // const conn = await mongoose.connect(
+    //   env.MONGO_URI,
+    //   connectionOptions
+    // )
 
-    if (dbConnection.isConnected) {
-      logger.info(`MongoDb Connected: ${conn.connection.host}`)
+    if (!connectionPromise) {
+  connectionPromise = mongoose.connect(
+    env.MONGO_URI,
+    connectionOptions
+  )
+}
 
-      //connection event handlers
+    const conn = await connectionPromise
+
+    logger.info(`MongoDB Connected: ${conn.connection.host}`)
+
+    // Register listeners only once
+    if (mongoose.connection.listenerCount('error') === 0) {
       mongoose.connection.on('error', err => {
-        logger.error(`MongoDb connection error`, err)
-        dbConnection.isConnected = false
+        logger.error('MongoDB connection error', err)
       })
 
-      mongoose.connection.on('disconnected', () => {
-        logger.info('MongoDb disconnected')
-        dbConnection.isConnected = false
-        //attempt to reconnect
-        if (dbConnection.retryCount < dbConnection.maxRetries) {
-          dbConnection.retryCount++
-          logger.info(`Attempting to reconnect (${dbConnection.retryCount}/${dbConnection.maxRetries})..`)
-          setTimeout(connectDB, 5000)
-        }
-      })
+      // mongoose.connection.on('disconnected', () => {
+      //   logger.warn('MongoDB disconnected')
+      // })
+    mongoose.connection.on('disconnected', () => {
+    logger.warn('MongoDB disconnected')
+    connectionPromise = null
+})
     }
-  } catch (error: unknown) {
-    dbConnection.retryCount++
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    logError(`MongoDb connection failed (attempt ${dbConnection.retryCount}/${dbConnection.maxRetries}):`, errorMessage)
+  // } catch (error) {
+  //   logError(error, 'MongoDB connection failed')
+  //   throw error
+  // }
 
-    if (dbConnection.retryCount < dbConnection.maxRetries) {
-      logger.info(`Retrying in 5 seconds...`)
-      setTimeout(connectDB, 5000)
-    } else {
-      logger.error('Max retries reached. Exiting...')
-      process.exit(1)
-    }
-  }
+  } catch (error) {
+  connectionPromise = null
+  logError(error, 'MongoDB connection failed')
+  throw error
+}
 }
 
 //handle graceful shutdown

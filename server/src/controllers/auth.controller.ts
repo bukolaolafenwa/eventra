@@ -11,11 +11,15 @@ const MAX_OTP_ATTEMPTS = 5 // Maximum OTP verification attempts before requiring
 const MAX_PASSWORD_RESET_ATTEMPTS = 5 // Maximum password reset attempts before requiring a new reset code
 
 
-
+function verifyEmailLink(email: string, role: 'attendee' | 'organizer') {
+  const path = role === 'organizer' ? '/organizer/auth/verify-email' : '/auth/verify-email'
+  return `${env.CLIENT_URL}${path}?email=${encodeURIComponent(email)}`
+}
 
 
 export const register = tryCatchWrapper(async (req: Request, res: Response) => {
   const { fullname, email, password, phone, role } = req.body
+  const resolvedRole = role === 'organizer' ? 'organizer' : 'attendee'
 
   const existingUser = await User.findOne({ email }).lean()
   if (existingUser) {
@@ -29,7 +33,7 @@ export const register = tryCatchWrapper(async (req: Request, res: Response) => {
     email,
     password,
     phone,
-    role: role === 'organizer' ? 'organizer' : 'attendee',
+    role: resolvedRole,
     emailVerificationOTP: otp,
     emailVerificationOTPExpiry: new Date(Date.now() + OTP_TTL_MS),
   })
@@ -37,7 +41,7 @@ export const register = tryCatchWrapper(async (req: Request, res: Response) => {
   await EmailService.sendVerifyAccountEmail({
     user,
     otp,
-    link: `${env.CLIENT_URL}/verify-email?email=${encodeURIComponent(email)}`,
+    link: verifyEmailLink(email, resolvedRole),
   })
 
   return sendTsRestSuccess(res, 201, {
@@ -154,7 +158,7 @@ export const resendOtp = tryCatchWrapper(async (req: Request, res: Response) => 
   await EmailService.sendVerifyAccountEmail({
     user,
     otp,
-    link: `${env.CLIENT_URL}/verify-email?email=${encodeURIComponent(email)}`,
+    link: verifyEmailLink(email, user.role),
   })
 
   return sendTsRestSuccess<undefined>(res, 200, {
