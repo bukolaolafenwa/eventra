@@ -18,7 +18,7 @@ import {
 
 import { validateFormData } from '../middlewares/schema.middleware.js'
 import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
-import { clearCache } from '../middlewares/cache.middleware.js'
+import { cacheMiddleware, clearCache } from '../middlewares/cache.middleware.js'
 
 import { createCategorySchema, updateCategorySchema, } from '../lib/schemaValidation.js'
 
@@ -29,7 +29,7 @@ const router = Router()
  * @desc    Retrieve all categories
  * @access  Public
  */
-router.get('/', getAllCategoriesController)
+router.get('/', cacheMiddleware(60), getAllCategoriesController)
 
 
 
@@ -52,7 +52,7 @@ router.get(
  * @desc    Retrieve a category by ID
  * @access  Public
  */
-router.get('/:id', getCategoryByIdController)
+router.get('/:id', cacheMiddleware(60), getCategoryByIdController)
 
 
 /**
