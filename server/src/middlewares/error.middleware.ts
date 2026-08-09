@@ -9,7 +9,7 @@ const pinoHttp = pinoHttpModule.default || pinoHttpModule
 // Determine if we're in development mode
 const isDev = env.NODE_ENV === 'development'
 
-class ErrorResponse extends Error {
+export class ErrorResponse extends Error {
   statusCode: number
 
   constructor(message: string, statusCode: number) {

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import mongoose from 'mongoose'
 
 export const registerSchema = z.object({
   fullname: z.string().trim().min(2, 'Fullname must be at least 2 characters'),
@@ -66,6 +67,10 @@ export const resolveBankAccountSchema = z.object({
   bankCode: z.string().trim().min(2),
 })
 
+const objectIdSchema = z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
+  message: 'Invalid ID.',
+})
+
 const venueSchema = z.object({
   name: z.string().trim().min(2),
   address: z.string().trim().min(3),
@@ -88,9 +93,9 @@ export const updateEventLineupSchema = z.object({
 const eventSchema = z.object({
   title: z.string().trim().min(3, 'Title must be at least 3 characters'),
   description: z.string().trim().min(10, 'Description must be at least 10 characters'),
-  category: z.string().trim().min(1, 'Category is required'),
+  category: objectIdSchema,
   type: z.enum(['free', 'paid']),
-  coverImage: z.string().trim().url().optional(),
+  coverImage: z.string().trim().url(),
   venue: venueSchema,
   startDate: z.coerce.date(),
   endDate: z.coerce.date().optional(),
@@ -108,6 +113,9 @@ const eventSchema = z.object({
     .array(lineupMemberSchema)
     .max(30, 'Lineup can have at most 30 entries')
     .optional(),
+
+  // Provisional — see the matching comment on IEvent.agePolicy in event.ts.
+  agePolicy: z.enum(['all-ages', '13+', '16+', '18+', '21+']).optional(),
 })
 
 export const createEventSchema = eventSchema
@@ -126,6 +134,20 @@ export const createEventSchema = eventSchema
     {
       message: 'daysBefore is required when using refund-until-days-before.',
       path: ['refundPolicy', 'daysBefore'],
+    }
+  )
+  .refine(
+    data => data.type !== 'paid' || !!data.refundPolicy,
+    {
+      message: 'Refund policy is required for paid events.',
+      path: ['refundPolicy'],
+    }
+  )
+  .refine(
+    data => data.startDate >= new Date(new Date().setHours(0, 0, 0, 0)),
+    {
+      message: 'Start date cannot be in the past.',
+      path: ['startDate'],
     }
   )
 
@@ -172,6 +194,16 @@ export const updateEventSchema = eventSchema
       path: ['refundPolicy', 'daysBefore'],
     }
   )
+  // Only fires when startDate is actually part of this update — editing
+  // unrelated fields on an event whose startDate has already passed must
+  // not fail.
+  .refine(
+    data => !data.startDate || data.startDate >= new Date(new Date().setHours(0, 0, 0, 0)),
+    {
+      message: 'Start date cannot be in the past.',
+      path: ['startDate'],
+    }
+  )
   
 
 export const createTicketTypeSchema = z.object({
@@ -200,6 +232,13 @@ export const rejectEventSchema = z.object({
   reason: z.string().trim().min(3, 'A rejection reason is required'),
 })
 
+// Model already supports status: 'suspended' + suspendedReason (see
+// models/event.ts), but there's no admin.controller.ts handler yet to
+// actually trigger it — that's Person C's file, flagging for them.
+export const suspendEventSchema = z.object({
+  reason: z.string().trim().min(3, 'A reason is required to suspend an event'),
+})
+
 export const updateProfileSchema = z
   .object({
     fullname: z.string().trim().min(2).optional(),
@@ -225,5 +264,8 @@ export const requestPromotionSchema = z.object({
 })
 
 export const postponeEventSchema = z.object({
-  newStartDate: z.coerce.date(),
+  newStartDate: z.coerce.date().refine(
+    date => date >= new Date(new Date().setHours(0, 0, 0, 0)),
+    { message: 'New date cannot be in the past' }
+  ),
 })
