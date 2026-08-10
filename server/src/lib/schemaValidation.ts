@@ -225,7 +225,6 @@ export const createCategorySchema = z.object({
 
 export const updateCategorySchema = z.object({
   name: z.string().trim().min(2).optional(),
-  isActive: z.boolean().optional(),
 })
 
 export const rejectEventSchema = z.object({

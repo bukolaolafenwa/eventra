@@ -75,31 +75,3 @@ export const updateCategoryController = tryCatchWrapper(
     })
   }
 )
-
-/**
- * Deactivates a category (soft delete).
- */
-export const deleteCategoryController = tryCatchWrapper(async (req: Request<CategoryParams>, res: Response) => {
-  const { id } = req.params
-  const category = await categoryService.deleteCategory(id)
-
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Category deactivated successfully',
-    body: category,
-  })
-})
-
-/**
- * Restores a deactivated category.
- */
-export const restoreCategoryController = tryCatchWrapper(async (req: Request<CategoryParams>, res: Response) => {
-  const { id } = req.params
-  const category = await categoryService.restoreCategory(id)
-
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Category restored successfully',
-    body: category,
-  })
-})
