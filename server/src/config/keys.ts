@@ -29,7 +29,7 @@ const ENV_VARS: EnvSpec[] = [
   { key: 'MEMCACHIER_USERNAME', required: true },
   { key: 'MEMCACHIER_PASSWORD', required: true },
 
-  // add
+  
   { key: 'CLOUDINARY_CLOUD_NAME', required: true },
   { key: 'CLOUDINARY_API_KEY', required: true },
   { key: 'CLOUDINARY_API_SECRET', required: true },
