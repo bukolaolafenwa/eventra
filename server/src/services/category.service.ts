@@ -68,48 +68,6 @@ export class CategoryService {
       category.slug = await this.generateUniqueSlug(payload.name)
     }
 
-    if (typeof payload.isActive === 'boolean') {
-      category.isActive = payload.isActive
-    }
-
-    await category.save()
-
-    return Category.findById(category._id).select('-__v').lean()
-  }
-
-  async deleteCategory(id: string) {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      throw new ErrorResponse('Invalid category ID', 400)
-    }
-
-    const category = await Category.findById(id)
-    if (!category) {
-      throw new ErrorResponse('Category not found', 404)
-    }
-    if (!category.isActive) {
-      throw new ErrorResponse('Category is already inactive', 400)
-    }
-
-    category.isActive = false
-    await category.save()
-
-    return Category.findById(category._id).select('-__v').lean()
-  }
-
-  async restoreCategory(id: string) {
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      throw new ErrorResponse('Invalid category ID', 400)
-    }
-
-    const category = await Category.findById(id)
-    if (!category) {
-      throw new ErrorResponse('Category not found', 404)
-    }
-    if (category.isActive) {
-      throw new ErrorResponse('Category is already active', 400)
-    }
-
-    category.isActive = true
     await category.save()
 
     return Category.findById(category._id).select('-__v').lean()
