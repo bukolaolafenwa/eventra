@@ -29,6 +29,11 @@ const ENV_VARS: EnvSpec[] = [
   { key: 'MEMCACHIER_USERNAME', required: true },
   { key: 'MEMCACHIER_PASSWORD', required: true },
 
+  
+  { key: 'CLOUDINARY_CLOUD_NAME', required: true },
+  { key: 'CLOUDINARY_API_KEY', required: true },
+  { key: 'CLOUDINARY_API_SECRET', required: true },
+
   // Bootstrap Admin
   { key: 'ADMIN_NAME' },
   { key: 'ADMIN_EMAIL' },
@@ -54,6 +59,10 @@ interface Env {
   readonly MEMCACHIER_SERVERS: string
   readonly MEMCACHIER_USERNAME: string
   readonly MEMCACHIER_PASSWORD: string
+
+  readonly CLOUDINARY_CLOUD_NAME: string
+  readonly CLOUDINARY_API_KEY: string
+  readonly CLOUDINARY_API_SECRET: string
 
   readonly ADMIN_NAME: string
   readonly ADMIN_EMAIL: string

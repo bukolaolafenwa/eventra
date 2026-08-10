@@ -1,217 +1,77 @@
 import mongoose from 'mongoose'
 import Category from '../models/category.js'
 import { generateSlug } from '../utils/slug.js'
-import type { CreateCategoryInput, UpdateCategoryInput, } from '../types/category.types.js'
+import { ErrorResponse } from '../middlewares/error.middleware.js'
+import type { CreateCategoryInput, UpdateCategoryInput } from '../types/category.types.js'
 
+export class CategoryService {
+  private async generateUniqueSlug(name: string): Promise<string> {
+    const baseSlug = generateSlug(name)
+    let slug = baseSlug
+    let counter = 1
 
-/**
- * Generates a unique slug.
- */
-const generateUniqueSlug = async (name: string): Promise<string> => {
-  const baseSlug = generateSlug(name)
-  let slug = baseSlug
-  let counter = 1
-
-  while (await Category.exists({ slug })) {
-    slug = `${baseSlug}-${counter}`
-    counter++
-  }
-
-  return slug
-}
-
-
-/**
- * Creates a new category.
- */
-export const createCategory = async (
-  payload: CreateCategoryInput
-) => {
-  // Prevent duplicate category names
-  const categoryExists = await Category.exists({
-    name: payload.name,
-  })
-
-  if (categoryExists) {
-    throw new Error('Category already exists')
-  }
-
-  const slug = await generateUniqueSlug(payload.name)
-
-  const category = await Category.create({
-    ...payload,
-    slug,
-  })
-
-  const createdCategory = await Category.findById(category._id)
-    .select('-__v')
-    .lean()
-
-  return createdCategory
-}
-
-
-/**
- * Retrieves all categories.
- */
-// export const getAllCategories = async () => {
-//   return Category.find()
-//     .sort({ createdAt: -1 })
-//     .lean()
-// }
-
-
-// export const getAllCategories = async () => {
-//   return Category.find()
-//     .select('-__v')
-//     .sort({ createdAt: -1 })
-//     .lean()
-// }
-
-
-// Makes the service reusable
-export const getAllCategories = async (
-  includeInactive = false
-) => {
-  const filter = includeInactive ? {} : { isActive: true }
-
-  return Category.find(filter)
-    .select('-__v')
-    .sort({ createdAt: -1 })
-    .lean()
-}
-
-
-/**
- * Retrieves a category by its ID.
- */
-export const getCategoryById = async (id: string) => {
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new Error('Invalid category ID')
-  }
-
-  const category = await Category.findById(id)
-    .select('-__v')
-    .lean()
-
-  if (!category) {
-    throw new Error('Category not found')
-  }
-
-  return category
-}
-
-
-
-/**
- * Updates an existing category.
- */
-export const updateCategory = async (
-  id: string,
-  payload: UpdateCategoryInput
-) => {
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new Error('Invalid category ID')
-  }
-
-  const category = await Category.findById(id)
-
-  if (!category) {
-    throw new Error('Category not found')
-  }
-
-  if (payload.name && payload.name !== category.name) {
-    const categoryExists = await Category.exists({
-      name: payload.name,
-      _id: { $ne: id },
-    })
-
-    if (categoryExists) {
-      throw new Error('Category already exists')
+    while (await Category.exists({ slug })) {
+      slug = `${baseSlug}-${counter}`
+      counter++
     }
 
-    category.name = payload.name
-    category.slug = await generateUniqueSlug(payload.name)
+    return slug
   }
 
-  if (typeof payload.isActive === 'boolean') {
-    category.isActive = payload.isActive
+  async createCategory(payload: CreateCategoryInput) {
+    const categoryExists = await Category.exists({ name: payload.name })
+    if (categoryExists) {
+      throw new ErrorResponse('Category already exists', 409)
+    }
+
+    const slug = await this.generateUniqueSlug(payload.name)
+    const category = await Category.create({ ...payload, slug })
+
+    return Category.findById(category._id).select('-__v').lean()
   }
 
-  await category.save()
+  async getAllCategories(includeInactive = false) {
+    const filter = includeInactive ? {} : { isActive: true }
+    return Category.find(filter).select('-__v').sort({ createdAt: -1 }).lean()
+  }
 
-  const updatedCategory = await Category.findById(category._id)
-    .select('-__v')
-    .lean()
+  async getCategoryById(id: string) {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      throw new ErrorResponse('Invalid category ID', 400)
+    }
 
-  return updatedCategory
+    const category = await Category.findById(id).select('-__v').lean()
+    if (!category) {
+      throw new ErrorResponse('Category not found', 404)
+    }
+
+    return category
+  }
+
+  async updateCategory(id: string, payload: UpdateCategoryInput) {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      throw new ErrorResponse('Invalid category ID', 400)
+    }
+
+    const category = await Category.findById(id)
+    if (!category) {
+      throw new ErrorResponse('Category not found', 404)
+    }
+
+    if (payload.name && payload.name !== category.name) {
+      const categoryExists = await Category.exists({ name: payload.name, _id: { $ne: id } })
+      if (categoryExists) {
+        throw new ErrorResponse('Category already exists', 409)
+      }
+
+      category.name = payload.name
+      category.slug = await this.generateUniqueSlug(payload.name)
+    }
+
+    await category.save()
+
+    return Category.findById(category._id).select('-__v').lean()
+  }
 }
 
-
-
-/**
- * Deactivates a category (soft delete).
- */
-export const deleteCategory = async (id: string) => {
-  // Validate ObjectId
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new Error('Invalid category ID')
-  }
-
-  // Check that the category exists
-  const category = await Category.findById(id)
-
-  if (!category) {
-    throw new Error('Category not found')
-  }
-
-  // Prevent unnecessary updates
-  if (!category.isActive) {
-    throw new Error('Category is already inactive')
-  }
-
-  // Soft delete
-  category.isActive = false
-
-  await category.save()
-
-  const updatedCategory = await Category.findById(category._id)
-    .select('-__v')
-    .lean()
-
-  return updatedCategory
-}
-
-
-/**
- * Restores a deactivated category.
- */
-export const restoreCategory = async (id: string) => {
-  // Validate ObjectId
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    throw new Error('Invalid category ID')
-  }
-
-  // Check that the category exists
-  const category = await Category.findById(id)
-
-  if (!category) {
-    throw new Error('Category not found')
-  }
-
-  // Prevent unnecessary updates
-  if (category.isActive) {
-    throw new Error('Category is already active')
-  }
-
-  // Restore
-  category.isActive = true
-
-  await category.save()
-
-  const updatedCategory = await Category.findById(category._id)
-    .select('-__v')
-    .lean()
-
-  return updatedCategory
-}
+export const categoryService = new CategoryService()

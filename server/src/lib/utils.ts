@@ -72,3 +72,43 @@ export const buildPaginationMeta = (currentPage: number, limit: number, total: n
     hasMore: currentPage < totalPages,
   }
 }
+
+// Powers Explore's "when" filter (today / this-weekend / this-week / this-month).
+// Returns a [from, to) range to match Event.startDate against, or null for an
+// unrecognized/missing value.
+export const getDateRangeForWhen = (when: string): { from: Date; to: Date } | null => {
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  switch (when) {
+    case 'today': {
+      const endOfToday = new Date(startOfToday)
+      endOfToday.setDate(endOfToday.getDate() + 1)
+      return { from: startOfToday, to: endOfToday }
+    }
+    case 'this-weekend': {
+      // Upcoming/current Saturday through end of Sunday. On a Sunday, the
+      // weekend is already underway — start from today, not next Saturday.
+      const day = startOfToday.getDay()
+      const from = new Date(startOfToday)
+      if (day !== 0) {
+        const daysUntilSaturday = (6 - day) % 7
+        from.setDate(from.getDate() + daysUntilSaturday)
+      }
+      const mondayAfter = new Date(from)
+      mondayAfter.setDate(mondayAfter.getDate() + (day === 0 ? 1 : 2))
+      return { from, to: mondayAfter }
+    }
+    case 'this-week': {
+      const endOfWeek = new Date(startOfToday)
+      endOfWeek.setDate(endOfWeek.getDate() + 7)
+      return { from: startOfToday, to: endOfWeek }
+    }
+    case 'this-month': {
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+      return { from: startOfToday, to: endOfMonth }
+    }
+    default:
+      return null
+  }
+}
