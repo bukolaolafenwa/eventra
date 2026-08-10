@@ -131,10 +131,11 @@ export const approveOrganizer = tryCatchWrapper(async (req: Request, res: Respon
     return sendTsRestError(res, 404, 'Organizer not found')
   }
 
-  const { accountName, accountNumber, bankCode } = organizer.organizerProfile
-  if (!accountName || !accountNumber || !bankCode) {
-    return sendTsRestError(res, 400, 'This organizer has not completed their bank details yet')
-  }
+  // I comment this out because we don't want to block approval on payout setup for free-event-organizers. The organizer can still be approved and start creating events, even if they haven't set up their bank details yet. The payout setup can be completed if they want to post paid events, and the isPayoutReady flag will indicate whether they are ready to receive payouts.
+  // const { accountName, accountNumber, bankCode } = organizer.organizerProfile
+  // if (!accountName || !accountNumber || !bankCode) {
+  //   return sendTsRestError(res, 400, 'This organizer has not completed their bank details yet')
+  // }
 
   organizer.organizerProfile.approvalStatus = 'approved'
   await organizer.save()

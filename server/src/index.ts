@@ -11,6 +11,8 @@ import authRoutes from './routes/auth.routes.js'
 import userRoutes from './routes/user.routes.js'
 import eventRoutes from './routes/event.routes.js'
 import categoryRoutes from './routes/category.routes.js'
+import organizerRoutes from './routes/organizer.routes.js'
+import adminRoutes from './routes/admin.routes.js'
 
 import {
   appErrorHandler,
@@ -170,6 +172,8 @@ app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/events', eventRoutes)
 app.use('/api/v1/users', userRoutes)
 app.use('/api/v1/categories', categoryRoutes)
+app.use('/api/v1/organizers', organizerRoutes)
+app.use('/api/v1/admin', adminRoutes)
 
 // Handle 404
 app.use(notFoundRoutes)
