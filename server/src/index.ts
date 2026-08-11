@@ -13,6 +13,8 @@ import eventRoutes from './routes/event.routes.js'
 import categoryRoutes from './routes/category.routes.js'
 import organizerRoutes from './routes/organizer.routes.js'
 import adminRoutes from './routes/admin.routes.js'
+import tickettypeRoutes from './routes/tickettype.routes.js'
+
 
 import {
   appErrorHandler,
@@ -169,6 +171,7 @@ app.get('/', (req: Request, res: Response) => {
 
 // Routes
 app.use('/api/v1/auth', authRoutes)
+app.use('/api/v1/events', tickettypeRoutes)
 app.use('/api/v1/events', eventRoutes)
 app.use('/api/v1/users', userRoutes)
 app.use('/api/v1/categories', categoryRoutes)
