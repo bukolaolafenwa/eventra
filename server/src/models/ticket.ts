@@ -3,6 +3,7 @@ import mongoose, { Document, Schema } from "mongoose";
 export interface ITicket extends Document {
   _id: mongoose.Types.ObjectId;
   order: mongoose.Types.ObjectId;
+  sequence: number;
   event: mongoose.Types.ObjectId;
   ticketType?: mongoose.Types.ObjectId;
   attendee?: mongoose.Types.ObjectId;
@@ -29,6 +30,15 @@ const TicketSchema = new Schema<ITicket>(
       type: Schema.Types.ObjectId,
       ref: "Order",
       required: true,
+    },
+    sequence: {
+     type: Number,
+     required: true,
+     min: 1,
+     validate: {
+     validator: Number.isInteger,
+     message: "Ticket sequence must be a whole number",
+    },
     },
     event: {
       type: Schema.Types.ObjectId,
@@ -117,7 +127,11 @@ const TicketSchema = new Schema<ITicket>(
   },
 );
 
-TicketSchema.index({ order: 1 });
+
+TicketSchema.index(
+  { order: 1, sequence: 1 },
+  { unique: true },
+);
 TicketSchema.index({ event: 1, status: 1 });
 TicketSchema.index({ ticketType: 1 });
 TicketSchema.index({ attendee: 1, createdAt: -1 });
