@@ -252,14 +252,16 @@ export class TicketTypeService {
       .sort({ price: 1 })
       .lean();
 
-    return ticketTypes.map((ticketType) => ({
-      ...ticketType,
-      quantityRemaining: Math.max(
-        0,
-        ticketType.quantity - ticketType.quantitySold,
-      ),
-    }));
-  }
+      return ticketTypes.map((ticketType) => ({
+        ...ticketType,
+         quantityRemaining: Math.max(
+          0,
+          ticketType.quantity -
+           ticketType.quantitySold -
+            (ticketType.quantityReserved ?? 0),
+   ),
+  }));
+    }
 
   async getOrganizerTicketTypes(
     eventId: string,
@@ -272,13 +274,16 @@ export class TicketTypeService {
       .sort({ price: 1 })
       .lean();
 
-    return ticketTypes.map((ticketType) => ({
-      ...ticketType,
-      quantityRemaining: Math.max(
-        0,
-        ticketType.quantity - ticketType.quantitySold,
-      ),
-    }));
+
+      return ticketTypes.map((ticketType) => ({
+       ...ticketType,
+        quantityRemaining: Math.max(
+         0,
+        ticketType.quantity -
+         ticketType.quantitySold -
+          (ticketType.quantityReserved ?? 0),
+    ),
+  }));
   }
 
   async updateTicketType(
@@ -320,12 +325,16 @@ export class TicketTypeService {
       nextSalesEndDate,
     );
 
-    if (nextQuantity < ticketType.quantitySold) {
+   if (
+    nextQuantity <
+    ticketType.quantitySold +
+     (ticketType.quantityReserved ?? 0)
+     ) {
       throw new ErrorResponse(
-        "Ticket quantity cannot be lower than quantity already sold",
-        400,
-      );
-    }
+    "Ticket quantity cannot be lower than the quantity already sold or reserved",
+    400,
+  );
+}
 
     await this.validateEventCapacity(
       event,
@@ -376,12 +385,15 @@ export class TicketTypeService {
       throw new ErrorResponse("Ticket type not found", 404);
     }
 
-    if (ticketType.quantitySold > 0) {
-      throw new ErrorResponse(
-        "A ticket type with completed sales cannot be deleted; deactivate it instead",
-        409,
-      );
-    }
+    if (
+     ticketType.quantitySold > 0 ||
+      (ticketType.quantityReserved ?? 0) > 0
+      ) {
+       throw new ErrorResponse(
+    "A ticket type with sold or reserved inventory cannot be deleted; deactivate it instead",
+    409,
+  );
+}
 
     await ticketType.deleteOne();
     await this.recalculateEventMinimumPrice(event._id);

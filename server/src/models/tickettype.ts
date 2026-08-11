@@ -9,6 +9,7 @@ export interface ITicketType extends Document {
   currency: "NGN";
   quantity: number;
   quantitySold: number;
+  quantityReserved: number;
   purchaseLimitPerPerson?: number;
   salesStartDate?: Date;
   salesEndDate?: Date;
@@ -67,6 +68,15 @@ const TicketTypeSchema = new Schema<ITicketType>(
         message: "Quantity sold must be a whole number",
       },
     },
+    quantityReserved: {
+    type: Number,
+    default: 0,
+    min: 0,
+    validate: {
+    validator: Number.isInteger,
+    message: "Reserved quantity must be a whole number",
+      },
+    },
     purchaseLimitPerPerson: {
       type: Number,
       min: 1,
@@ -95,23 +105,39 @@ const TicketTypeSchema = new Schema<ITicketType>(
 
 TicketTypeSchema.virtual("quantityRemaining").get(
   function (this: ITicketType): number {
-    return Math.max(0, this.quantity - this.quantitySold);
+    return Math.max(
+      0,
+      this.quantity -
+        this.quantitySold -
+        this.quantityReserved,
+    );
   },
 );
 
-TicketTypeSchema.pre("validate", function (this: ITicketType): void {
-  if (this.quantitySold > this.quantity) {
-    throw new Error("Quantity sold cannot exceed ticket quantity");
-  }
+TicketTypeSchema.pre(
+  "validate",
+  function (this: ITicketType): void {
+    if (
+      this.quantitySold + this.quantityReserved >
+      this.quantity
+    ) {
+      throw new Error(
+        "Sold and reserved quantities cannot exceed ticket quantity",
+      );
+    }
 
-  if (
-    this.salesStartDate &&
-    this.salesEndDate &&
-    this.salesEndDate <= this.salesStartDate
-  ) {
-    throw new Error("Sales end date must be after sales start date");
-  }
-});
+    if (
+      this.salesStartDate &&
+      this.salesEndDate &&
+      this.salesEndDate <= this.salesStartDate
+    ) {
+      throw new Error(
+        "Sales end date must be after sales start date",
+      );
+    }
+  },
+);
+
 
 // Prevent duplicate ticket names within the same event.
 TicketTypeSchema.index(
