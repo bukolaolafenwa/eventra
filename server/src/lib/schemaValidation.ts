@@ -206,18 +206,71 @@ export const updateEventSchema = eventSchema
   )
   
 
-export const createTicketTypeSchema = z.object({
+interface TicketTypeSalesPeriod {
+  salesStartDate?: Date
+  salesEndDate?: Date
+}
+
+const ticketTypeBaseSchema = z.object({
   name: z.string().trim().min(1, 'name is required'),
-  description: z.string().trim().max(200).optional(),
-  price: z.number().min(0),
-  quantity: z.number().int().positive(),
-  purchaseLimitPerPerson: z.number().int().positive().optional(),
+
+  description: z
+    .string()
+    .trim()
+    .max(200, 'description cannot exceed 200 characters')
+    .optional(),
+
+  // Stored as whole naira.
+  price: z
+    .number()
+    .int('price must be a whole naira amount')
+    .min(0, 'price cannot be negative'),
+
+  quantity: z
+    .number()
+    .int('quantity must be a whole number')
+    .positive('quantity must be greater than zero'),
+
+  purchaseLimitPerPerson: z
+    .number()
+    .int('purchaseLimitPerPerson must be a whole number')
+    .positive('purchaseLimitPerPerson must be greater than zero')
+    .optional(),
+
+  salesStartDate: z.coerce.date().optional(),
+
+  salesEndDate: z.coerce.date().optional(),
 })
 
+const hasValidTicketSalesPeriod = (
+  data: TicketTypeSalesPeriod
+): boolean => {
+  if (!data.salesStartDate || !data.salesEndDate) {
+    return true
+  }
 
-export const updateTicketTypeSchema = createTicketTypeSchema.partial().extend({
-  isActive: z.boolean().optional(),
-})
+  return data.salesEndDate > data.salesStartDate
+}
+
+export const createTicketTypeSchema = ticketTypeBaseSchema.refine(
+  hasValidTicketSalesPeriod,
+  {
+    message: 'Sales end date must be after sales start date',
+    path: ['salesEndDate'],
+  }
+)
+
+export const updateTicketTypeSchema = ticketTypeBaseSchema
+  .partial()
+  .extend({
+    isActive: z.boolean().optional(),
+  })
+  .refine(hasValidTicketSalesPeriod, {
+    message: 'Sales end date must be after sales start date',
+    path: ['salesEndDate'],
+  })
+
+
 
 export const createCategorySchema = z.object({
   name: z.string().trim().min(2, 'name is required'),
