@@ -27,6 +27,18 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 })
 
+export const googleAuthSchema = z.object({
+  credential: z
+    .string({
+      error: 'Google credential is required',
+    })
+    .trim()
+    .min(1, 'Google credential is required'),
+  role: z
+    .enum(['attendee', 'organizer'])
+    .optional(),
+})
+
 export const forgotPasswordSchema = z.object({
   email: z.string().trim().toLowerCase().email('Invalid email address'),
 })
@@ -37,15 +49,66 @@ export const resetPasswordSchema = z.object({
   newPassword: z.string().min(8, 'Password must be at least 8 characters'),
 })
 
+const objectIdSchema = z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
+  message: 'Invalid ID.',
+})
+
 export const checkoutSchema = z.object({
+  customer: z.object({
+    fullname: z.string().trim().min(2, 'fullname is required'),
+    email: z.string().trim().toLowerCase().email('Invalid email address'),
+    phone: z.string().trim().min(7, 'Invalid phone number').optional(),
+  }),
   items: z
     .array(
       z.object({
-        ticketTypeId: z.string().trim().min(1, 'ticketTypeId is required'),
-        quantity: z.number().int().positive('quantity must be a positive integer'),
+        ticketTypeId: objectIdSchema,
+        quantity: z
+          .number()
+          .int()
+          .positive('quantity must be a positive integer'),
       })
     )
     .min(1, 'At least one ticket item is required'),
+})
+
+// export const checkoutSchema = z.object({
+//   items: z
+//     .array(
+//       z.object({
+//         ticketTypeId: z.string().trim().min(1, 'ticketTypeId is required'),
+//         quantity: z.number().int().positive('quantity must be a positive integer'),
+//       })
+//     )
+//     .min(1, 'At least one ticket item is required'),
+// })
+
+
+export const createReservationSchema = z.object({
+  customer: z.object({
+    fullname: z
+      .string()
+      .trim()
+      .min(2, 'fullname is required'),
+
+    email: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .email('Invalid email address'),
+
+    phone: z
+      .string()
+      .trim()
+      .min(7, 'Invalid phone number')
+      .optional(),
+  }),
+
+  quantity: z
+    .number()
+    .int('quantity must be a whole number')
+    .min(1, 'At least one guest is required')
+    .max(4, 'A reservation can contain at most 4 guests'),
 })
 
 export const organizerProfileSchema = z.object({
@@ -65,10 +128,6 @@ export const organizerProfileSchema = z.object({
 export const resolveBankAccountSchema = z.object({
   accountNumber: z.string().trim().min(10).max(10),
   bankCode: z.string().trim().min(2),
-})
-
-const objectIdSchema = z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
-  message: 'Invalid ID.',
 })
 
 const venueSchema = z.object({
@@ -206,18 +265,71 @@ export const updateEventSchema = eventSchema
   )
   
 
-export const createTicketTypeSchema = z.object({
+interface TicketTypeSalesPeriod {
+  salesStartDate?: Date
+  salesEndDate?: Date
+}
+
+const ticketTypeBaseSchema = z.object({
   name: z.string().trim().min(1, 'name is required'),
-  description: z.string().trim().max(200).optional(),
-  price: z.number().min(0),
-  quantity: z.number().int().positive(),
-  purchaseLimitPerPerson: z.number().int().positive().optional(),
+
+  description: z
+    .string()
+    .trim()
+    .max(200, 'description cannot exceed 200 characters')
+    .optional(),
+
+  // Stored as whole naira.
+  price: z
+    .number()
+    .int('price must be a whole naira amount')
+    .min(0, 'price cannot be negative'),
+
+  quantity: z
+    .number()
+    .int('quantity must be a whole number')
+    .positive('quantity must be greater than zero'),
+
+  purchaseLimitPerPerson: z
+    .number()
+    .int('purchaseLimitPerPerson must be a whole number')
+    .positive('purchaseLimitPerPerson must be greater than zero')
+    .optional(),
+
+  salesStartDate: z.coerce.date().optional(),
+
+  salesEndDate: z.coerce.date().optional(),
 })
 
+const hasValidTicketSalesPeriod = (
+  data: TicketTypeSalesPeriod
+): boolean => {
+  if (!data.salesStartDate || !data.salesEndDate) {
+    return true
+  }
 
-export const updateTicketTypeSchema = createTicketTypeSchema.partial().extend({
-  isActive: z.boolean().optional(),
-})
+  return data.salesEndDate > data.salesStartDate
+}
+
+export const createTicketTypeSchema = ticketTypeBaseSchema.refine(
+  hasValidTicketSalesPeriod,
+  {
+    message: 'Sales end date must be after sales start date',
+    path: ['salesEndDate'],
+  }
+)
+
+export const updateTicketTypeSchema = ticketTypeBaseSchema
+  .partial()
+  .extend({
+    isActive: z.boolean().optional(),
+  })
+  .refine(hasValidTicketSalesPeriod, {
+    message: 'Sales end date must be after sales start date',
+    path: ['salesEndDate'],
+  })
+
+
 
 export const createCategorySchema = z.object({
   name: z.string().trim().min(2, 'name is required'),
@@ -267,4 +379,13 @@ export const postponeEventSchema = z.object({
     date => date >= new Date(new Date().setHours(0, 0, 0, 0)),
     { message: 'New date cannot be in the past' }
   ),
+})
+
+export const guestTicketAccessRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email address'),
+})
+
+export const guestTicketAccessVerifySchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email address'),
+  otp: z.string().trim().length(6, 'Enter the 6-digit code'),
 })

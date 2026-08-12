@@ -3,19 +3,24 @@ import {
   approveEvent,
   approveEventPromotion,
   approveOrganizer,
+  approveRefundRequest,
   getPlatformStats,
   listPendingEvents,
   listPendingOrganizers,
+  listRefundRequests,
   listUsers,
   rejectEvent,
   rejectEventPromotion,
   rejectOrganizer,
+  rejectRefundRequest,
+  suspendEvent,
   suspendUser,
+  unsuspendEvent,
   unsuspendUser,
 } from '../controllers/admin.controller.js'
 import { requireAdmin, verifySession } from '../middlewares/auth.middleware.js'
 import { validateFormData } from '../middlewares/schema.middleware.js'
-import { createCategorySchema, rejectEventSchema, updateCategorySchema } from '../lib/schemaValidation.js'
+import { createCategorySchema, rejectEventSchema, suspendEventSchema, updateCategorySchema } from '../lib/schemaValidation.js'
 
 const router = Router()
 
@@ -39,8 +44,17 @@ router.get('/events/pending', listPendingEvents)
 router.patch('/events/:id/approve', approveEvent)
 router.patch('/events/:id/reject', validateFormData(rejectEventSchema), rejectEvent)
 
+// Event moderation
+router.patch('/events/:id/suspend', validateFormData(suspendEventSchema), suspendEvent)
+router.patch('/events/:id/unsuspend', unsuspendEvent)
+
 // Promotion approval
 router.patch('/events/:id/promotion/approve', approveEventPromotion)
 router.patch('/events/:id/promotion/reject', rejectEventPromotion)
+
+// Refund requests
+router.get('/refund-requests', listRefundRequests)
+router.patch('/refund-requests/:id/approve', approveRefundRequest)
+router.patch('/refund-requests/:id/reject', rejectRefundRequest)
 
 export default router

@@ -1,8 +1,13 @@
 import { Request, Response } from 'express'
+import mongoose from 'mongoose'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
-import { sanitizeUser } from '../lib/utils.js'
+import { buildPaginationMeta, getPagination, sanitizeUser } from '../lib/utils.js'
 import User, { IOrganizerProfile } from '../models/user.js'
+import Event from '../models/event.js'
+import Order from '../models/order.js'
+import Ticket from '../models/ticket.js'
+import { paystackService } from '../services/paystack.service.js'
 
 /**
  * Create or update the caller's organizer profile (org info + bank
@@ -125,13 +130,41 @@ export const getOrganizerProfile = tryCatchWrapper(async (req: Request, res: Res
   })
 })
 
-// TODO: reintroduce listBanks and resolveBankAccount once Paystack is
-// wired back up. listBanks cached PaystackService.listBanks() in-process
-// for a day (the bank list is effectively static). resolveBankAccount
-// confirmed the account holder's name for the "Where should we send your
-// money?" step via PaystackService.resolveAccount({ accountNumber, bankCode }),
-// so the form could fill Account Holder Name from a verified source
-// rather than letting the organizer type it themselves.
+/**
+ * Nigerian bank list for the "Where should we send your money?" step —
+ * cached in-process for a day since Paystack's bank list is effectively
+ * static, so this almost never actually hits their API.
+ */
+export const listBanks = tryCatchWrapper(async (req: Request, res: Response) => {
+  const banks = await paystackService.listBanks()
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Banks fetched',
+    body: banks,
+  })
+})
+
+/**
+ * Confirms the account holder's name for a bank account before it's saved
+ * to the organizer's profile, so the form can fill Account Holder Name
+ * from a verified source rather than letting the organizer type it
+ * themselves (and possibly typo their own payout destination).
+ */
+export const resolveBankAccount = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { accountNumber, bankCode } = req.body as { accountNumber: string; bankCode: string }
+
+  try {
+    const account = await paystackService.resolveAccount({ accountNumber, bankCode })
+    return sendTsRestSuccess(res, 200, {
+      success: true,
+      message: 'Account resolved',
+      body: account,
+    })
+  } catch (error: any) {
+    return sendTsRestError(res, 400, error.message || 'Could not resolve this account')
+  }
+})
 
 const STATUS_LABEL: Record<string, string> = {
   draft: 'Draft',
@@ -139,22 +172,143 @@ const STATUS_LABEL: Record<string, string> = {
   rejected: 'Rejected',
   cancelled: 'Cancelled',
   postponed: 'Postponed',
+  suspended: 'Suspended',
   sold_out: 'Sold out',
   live: 'Live',
   past: 'Past',
 }
 
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
+function percentChange(current: number, previous: number): number | null {
+  if (previous === 0) return null // undefined % change from a zero baseline — let the client show "New"
+  return Math.round(((current - previous) / previous) * 100)
+}
+
 /**
  * Powers the dashboard's Overview page: the 4 stat cards (tickets sold,
  * revenue, live events, payout due) and the "Recent events" table.
- *
- * TODO: once Order is wired up, restore the payout aggregation
- * (payoutDue, nextPayoutInDays) and the 30-day-vs-previous-30-day percent
- * change on ticketsSold/revenue. For now those fields are stubbed so the
- * response shape doesn't break the frontend.
  */
+export const getOrganizerOverview = tryCatchWrapper(async (req: Request, res: Response) => {
+  const organizerId = req.session.userId
+  const now = new Date()
+  const thirtyDaysAgo = new Date(now.getTime() - THIRTY_DAYS_MS)
+  const sixtyDaysAgo = new Date(now.getTime() - 2 * THIRTY_DAYS_MS)
 
+  const [events, recentEvents, currentPeriodAgg, previousPeriodAgg, payoutDueAgg] = await Promise.all([
+    Event.find({ organizer: organizerId }).select('status').lean(),
+    Event.find({ organizer: organizerId })
+      .select('title slug status type startDate capacity ticketsSoldCount reservationsCount revenueTotal endDate')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean(),
+    Order.aggregate([
+      { $match: { status: { $in: ['paid', 'partially_refunded'] }, paidAt: { $gte: thirtyDaysAgo } } },
+      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
+      { $unwind: '$eventDoc' },
+      { $match: { 'eventDoc.organizer': new mongoose.Types.ObjectId(organizerId) } },
+      { $group: { _id: null, ticketsSold: { $sum: { $sum: '$items.quantity' } }, revenue: { $sum: '$subtotal' } } },
+    ]),
+    Order.aggregate([
+      { $match: { status: { $in: ['paid', 'partially_refunded'] }, paidAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo } } },
+      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
+      { $unwind: '$eventDoc' },
+      { $match: { 'eventDoc.organizer': new mongoose.Types.ObjectId(organizerId) } },
+      { $group: { _id: null, ticketsSold: { $sum: { $sum: '$items.quantity' } }, revenue: { $sum: '$subtotal' } } },
+    ]),
+    // Held for a few days after the event per the standard payout-delay
+    // policy — only orders on events that have already ended are "due".
+    Order.aggregate([
+      { $match: { status: { $in: ['paid', 'partially_refunded'] } } },
+      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
+      { $unwind: '$eventDoc' },
+      {
+        $match: {
+          'eventDoc.organizer': new mongoose.Types.ObjectId(organizerId),
+          'eventDoc.endDate': { $lt: now },
+        },
+      },
+      { $group: { _id: null, gross: { $sum: '$subtotal' } } },
+    ]),
+  ])
 
-// TODO: reintroduce listOrganizerPayouts once Order is implemented.
-// It previously listed paid/partially_refunded orders for the
-// organizer's events with pagination and a payoutStatus breakdown.
+  const liveEvents = events.filter(e => e.status === 'approved').length
+
+  const currentTicketsSold = currentPeriodAgg[0]?.ticketsSold ?? 0
+  const currentRevenue = currentPeriodAgg[0]?.revenue ?? 0
+  const previousTicketsSold = previousPeriodAgg[0]?.ticketsSold ?? 0
+  const previousRevenue = previousPeriodAgg[0]?.revenue ?? 0
+
+  // PRD Section 8: Eventra retains 5% commission, organizer gets the remainder.
+  const payoutDue = Math.round((payoutDueAgg[0]?.gross ?? 0) * 0.95)
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Overview fetched',
+    body: {
+      ticketsSold: { value: currentTicketsSold, changePercent: percentChange(currentTicketsSold, previousTicketsSold) },
+      revenue: { value: currentRevenue, changePercent: percentChange(currentRevenue, previousRevenue) },
+      liveEvents,
+      payoutDue,
+      recentEvents: recentEvents.map(event => ({
+        title: event.title,
+        slug: event.slug,
+        type: event.type,
+        startDate: event.startDate,
+        soldCount: event.type === 'free' ? event.reservationsCount : event.ticketsSoldCount,
+        capacity: event.capacity ?? null,
+        revenue: event.revenueTotal,
+        statusLabel: STATUS_LABEL[event.status] ?? event.status,
+      })),
+    },
+  })
+})
+
+/**
+ * Lists paid/partially-refunded orders across the organizer's events, with
+ * a payoutStatus breakdown — the dashboard's Payouts page.
+ */
+export const listOrganizerPayouts = tryCatchWrapper(async (req: Request, res: Response) => {
+  const organizerId = req.session.userId
+  const { page, limit, skip } = getPagination(req.query)
+  const now = new Date()
+
+  const organizerEvents = await Event.find({ organizer: organizerId }).select('_id title slug endDate').lean()
+  const eventIds = organizerEvents.map(e => e._id)
+  const eventById = new Map(organizerEvents.map(e => [e._id.toString(), e]))
+
+  const filter = {
+    event: { $in: eventIds },
+    status: { $in: ['paid', 'partially_refunded'] as Array<'paid' | 'partially_refunded'> },
+  }
+
+  const [orders, total] = await Promise.all([
+    Order.find(filter).sort({ paidAt: -1 }).skip(skip).limit(limit).lean(),
+    Order.countDocuments(filter),
+  ])
+
+  const payouts = orders.map(order => {
+    const event = eventById.get(order.event.toString())
+    // Matches the payout-delay policy used in getOrganizerOverview above —
+    // due once the event has ended, held until then.
+    const isDue = event?.endDate ? event.endDate.getTime() < now.getTime() : false
+
+    return {
+      orderId: order._id,
+      orderNumber: order.orderNumber,
+      eventTitle: event?.title ?? 'Unknown event',
+      eventSlug: event?.slug,
+      grossAmount: order.subtotal,
+      commission: order.serviceFee,
+      netAmount: Math.round(order.subtotal * 0.95),
+      paidAt: order.paidAt,
+      payoutStatus: isDue ? 'due' : 'pending',
+    }
+  })
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Payouts fetched',
+    body: { payouts, meta: buildPaginationMeta(page, limit, total) },
+  })
+})

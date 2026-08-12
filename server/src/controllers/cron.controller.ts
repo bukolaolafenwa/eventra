@@ -1,30 +1,30 @@
 import { Request, Response } from 'express'
-import { env } from '../config/keys.js'
+import { isAuthorizedCronCall } from '../lib/cronAuth.js'
 import { expirePromotions } from '../jobs/promotionExpiryCron.js'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 
-const isAuthorizedCronCall = (req: Request): boolean => req.headers['x-cron-secret'] === env.CRON_SECRET
-
 /**
- * TODO(payouts): processDuePayouts() (jobs/payoutCron.js) triggers real
- * Paystack transfers against settlement data owned by Person B (Tickets,
- * Checkout & Payments). Stubbed out until that job is confirmed safe to wire
- * up — re-add the import and swap the 501 for the real call once it's ready.
+ * STILL STUBBED — deliberately not wired to jobs/payoutCron.ts's
+ * processDuePayouts(). That function calls a paystackService method that
+ * doesn't exist (initiateTransfer), reads Order fields that don't exist
+ * on the current model (payoutStatus, organizerEarnings), and depends on
+ * organizerProfile.paystackRecipientCode — which nothing in this codebase
+ * currently populates (see admin.controller.ts's approveOrganizer comment:
+ * transfer-recipient creation was removed and never replaced). Wiring this
+ * up as-is would throw on every cron invocation. This needs a real design
+ * decision — how/when is a Paystack transfer recipient actually created
+ * for an organizer? — before it's safe to re-enable. The organizer payout
+ * *amount* is already visible read-only via listOrganizerPayouts in
+ * organizer.controller.ts; this cron is specifically about automating the
+ * actual money transfer.
  */
 export const checkPayoutCron = tryCatchWrapper(async (req: Request, res: Response) => {
   if (!isAuthorizedCronCall(req)) {
     return sendTsRestError(res, 401, 'Unauthorized: invalid or missing CRON_SECRET')
   }
 
-  return sendTsRestError(res, 501, 'Payout cron is not wired up yet (pending payments integration)')
-  // const result = await processDuePayouts()
-  //
-  // return sendTsRestSuccess(res, 200, {
-  //   success: true,
-  //   message: 'Payout cron job completed',
-  //   body: result,
-  // })
+  return sendTsRestError(res, 501, 'Automated payout transfers are not wired up yet — see the comment above this handler')
 })
 
 export const checkPromotionExpiryCron = tryCatchWrapper(async (req: Request, res: Response) => {
