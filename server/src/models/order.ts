@@ -41,6 +41,10 @@ export interface IOrder extends Document {
   refundedAmount: number;
   paidAt?: Date;
   confirmedAt?: Date;
+
+  ticketConfirmationEmailSentAt?: Date;
+  ticketConfirmationEmailSendingAt?: Date;
+
   failedAt?: Date;
   expiresAt?: Date;
   cancelledAt?: Date;
@@ -228,6 +232,12 @@ const OrderSchema = new Schema<IOrder>(
     },
     confirmedAt: {
       type: Date,
+    },
+    ticketConfirmationEmailSentAt: {
+    type: Date,
+    },
+    ticketConfirmationEmailSendingAt: {
+    type: Date,
     },
     failedAt: {
       type: Date,

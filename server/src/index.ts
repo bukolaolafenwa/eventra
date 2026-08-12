@@ -17,6 +17,7 @@ import tickettypeRoutes from './routes/tickettype.routes.js'
 import checkoutRoutes from './routes/checkout.routes.js'
 import paymentRoutes from './routes/payment.routes.js'
 import { startOrderExpiryJob } from "./jobs/orderExpiry.js";
+import reservationRoutes from './routes/reservation.routes.js'
 
 
 import {
@@ -174,12 +175,13 @@ app.get('/', (req: Request, res: Response) => {
 
 // Routes
 app.use('/api/v1/auth', authRoutes)
-
 app.use('/api/v1/payments', paymentRoutes)
 
 app.use('/api/v1/events', checkoutRoutes)
 app.use('/api/v1/events', tickettypeRoutes)
+app.use('/api/v1/events', reservationRoutes)
 app.use('/api/v1/events', eventRoutes)
+
 
 app.use('/api/v1/users', userRoutes)
 app.use('/api/v1/categories', categoryRoutes)

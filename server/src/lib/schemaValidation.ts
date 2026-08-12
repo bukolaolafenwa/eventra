@@ -83,6 +83,34 @@ export const checkoutSchema = z.object({
 //     .min(1, 'At least one ticket item is required'),
 // })
 
+
+export const createReservationSchema = z.object({
+  customer: z.object({
+    fullname: z
+      .string()
+      .trim()
+      .min(2, 'fullname is required'),
+
+    email: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .email('Invalid email address'),
+
+    phone: z
+      .string()
+      .trim()
+      .min(7, 'Invalid phone number')
+      .optional(),
+  }),
+
+  quantity: z
+    .number()
+    .int('quantity must be a whole number')
+    .min(1, 'At least one guest is required')
+    .max(4, 'A reservation can contain at most 4 guests'),
+})
+
 export const organizerProfileSchema = z.object({
   businessName: z.string().trim().min(2).optional(),
   category: z.string().trim().min(1).optional(),

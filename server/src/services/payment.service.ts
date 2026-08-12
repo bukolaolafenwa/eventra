@@ -3,7 +3,9 @@ import mongoose from 'mongoose'
 import { ErrorResponse } from '../middlewares/error.middleware.js'
 import Event from '../models/event.js'
 import Order, { IOrder } from '../models/order.js'
+import Ticket from '../models/ticket.js'
 import TicketType from '../models/tickettype.js'
+import { EmailService } from './email.service.js'
 import { paystackService } from './paystack.service.js'
 import { ticketService } from './ticket.service.js'
 
@@ -38,95 +40,244 @@ export class PaymentService {
     const session = await mongoose.startSession()
 
     try {
-      await session.withTransaction(async (): Promise<void> => {
-        const currentOrder = await Order.findById(
-          order._id,
-        ).session(session)
+      await session.withTransaction(
+        async (): Promise<void> => {
+          const currentOrder = await Order.findById(
+            order._id,
+          ).session(session)
 
-        if (!currentOrder) {
-          throw new ErrorResponse('Order not found', 404)
-        }
-
-        // A repeated callback or webhook must not increment inventory
-        // or event totals for a second time.
-        if (
-          currentOrder.status === 'paid' ||
-          currentOrder.status === 'confirmed'
-        ) {
-          return
-        }
-
-        if (currentOrder.status !== 'pending') {
-          throw new ErrorResponse(
-            `Order cannot be paid from status ${currentOrder.status}`,
-            409,
-          )
-        }
-
-        let totalTicketQuantity = 0
-
-        for (const item of currentOrder.items) {
-          if (!item.ticketType) {
+          if (!currentOrder) {
             throw new ErrorResponse(
-              'Paid order item is missing its ticket type',
-              500,
+              'Order not found',
+              404,
             )
           }
 
-          const inventoryUpdate =
-            await TicketType.updateOne(
-              {
-                _id: item.ticketType,
-                event: currentOrder.event,
-                quantityReserved: {
-                  $gte: item.quantity,
-                },
-              },
-              {
-                $inc: {
-                  quantityReserved: -item.quantity,
-                  quantitySold: item.quantity,
-                },
-              },
-              { session },
-            )
+          // A repeated callback or webhook must not increment inventory
+          // or event totals for a second time.
+          if (
+            currentOrder.status === 'paid' ||
+            currentOrder.status === 'confirmed'
+          ) {
+            return
+          }
 
-          if (inventoryUpdate.modifiedCount !== 1) {
+          if (currentOrder.status !== 'pending') {
             throw new ErrorResponse(
-              `Reserved inventory for ${item.ticketTypeName} is inconsistent`,
+              `Order cannot be paid from status ${currentOrder.status}`,
               409,
             )
           }
 
-          totalTicketQuantity += item.quantity
-        }
+          let totalTicketQuantity = 0
 
-        const eventUpdate = await Event.updateOne(
-          { _id: currentOrder.event },
-          {
-            $inc: {
-              ticketsSoldCount: totalTicketQuantity,
-              revenueTotal: currentOrder.subtotal,
+          for (const item of currentOrder.items) {
+            if (!item.ticketType) {
+              throw new ErrorResponse(
+                'Paid order item is missing its ticket type',
+                500,
+              )
+            }
+
+            const inventoryUpdate =
+              await TicketType.updateOne(
+                {
+                  _id: item.ticketType,
+                  event: currentOrder.event,
+                  quantityReserved: {
+                    $gte: item.quantity,
+                  },
+                },
+                {
+                  $inc: {
+                    quantityReserved: -item.quantity,
+                    quantitySold: item.quantity,
+                  },
+                },
+                { session },
+              )
+
+            if (
+              inventoryUpdate.modifiedCount !== 1
+            ) {
+              throw new ErrorResponse(
+                `Reserved inventory for ${item.ticketTypeName} is inconsistent`,
+                409,
+              )
+            }
+
+            totalTicketQuantity += item.quantity
+          }
+
+          const eventUpdate = await Event.updateOne(
+            { _id: currentOrder.event },
+            {
+              $inc: {
+                ticketsSoldCount:
+                  totalTicketQuantity,
+                revenueTotal:
+                  currentOrder.subtotal,
+              },
             },
-          },
-          { session },
-        )
-
-        if (eventUpdate.modifiedCount !== 1) {
-          throw new ErrorResponse(
-            'Event sales totals could not be updated',
-            500,
+            { session },
           )
-        }
 
-        currentOrder.status = 'paid'
-        currentOrder.paidAt = paidAt
-        currentOrder.failureReason = undefined
+          if (eventUpdate.modifiedCount !== 1) {
+            throw new ErrorResponse(
+              'Event sales totals could not be updated',
+              500,
+            )
+          }
 
-        await currentOrder.save({ session })
-      })
+          currentOrder.status = 'paid'
+          currentOrder.paidAt = paidAt
+          currentOrder.failureReason = undefined
+
+          await currentOrder.save({ session })
+        },
+      )
     } finally {
       await session.endSession()
+    }
+  }
+
+  private async sendTicketConfirmationEmail(
+    orderId: mongoose.Types.ObjectId,
+  ): Promise<void> {
+    const now = new Date()
+    const staleSendingTime = new Date(
+      now.getTime() - 5 * 60 * 1000,
+    )
+
+    /*
+     * Atomically claim email delivery. This prevents the browser
+     * callback and Paystack webhook from sending the same email
+     * concurrently. An abandoned claim is retryable after five minutes.
+     */
+    const claimedOrder =
+      await Order.findOneAndUpdate(
+        {
+          _id: orderId,
+          status: 'paid',
+          ticketConfirmationEmailSentAt: {
+            $exists: false,
+          },
+          $or: [
+            {
+              ticketConfirmationEmailSendingAt: {
+                $exists: false,
+              },
+            },
+            {
+              ticketConfirmationEmailSendingAt: {
+                $lte: staleSendingTime,
+              },
+            },
+          ],
+        },
+        {
+          $set: {
+            ticketConfirmationEmailSendingAt:
+              now,
+          },
+        },
+        {
+          new: true,
+        },
+      ).lean()
+
+    if (!claimedOrder) {
+      return
+    }
+
+    try {
+      const [event, tickets] =
+        await Promise.all([
+          Event.findById(claimedOrder.event)
+            .select('title startDate venue')
+            .lean(),
+
+          Ticket.find({
+            order: claimedOrder._id,
+          })
+            .select('code')
+            .sort({ sequence: 1 })
+            .lean(),
+        ])
+
+      if (!event) {
+        throw new ErrorResponse(
+          'Event not found',
+          404,
+        )
+      }
+
+      if (tickets.length === 0) {
+        throw new ErrorResponse(
+          'No tickets found for confirmation email',
+          500,
+        )
+      }
+
+      const emailResult =
+        await EmailService.sendTicketConfirmationEmail(
+          {
+            user: {
+              fullname:
+                claimedOrder.customer.fullname,
+              email:
+                claimedOrder.customer.email,
+            },
+            eventTitle: event.title,
+            eventDateLabel:
+              new Intl.DateTimeFormat('en-NG', {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+                timeZone: 'Africa/Lagos',
+              }).format(event.startDate),
+            venueLabel: [
+              event.venue.name,
+              event.venue.city,
+            ]
+              .filter(Boolean)
+              .join(', '),
+            ticketCodes: tickets.map(
+              ticket => ticket.code,
+            ),
+          },
+        )
+
+      if (!emailResult.success) {
+        throw new Error(
+          'Ticket confirmation email could not be sent',
+        )
+      }
+
+      await Order.updateOne(
+        { _id: claimedOrder._id },
+        {
+          $set: {
+            ticketConfirmationEmailSentAt:
+              new Date(),
+          },
+          $unset: {
+            ticketConfirmationEmailSendingAt: 1,
+          },
+        },
+      )
+    } catch {
+      /*
+       * Release the claim so a later verification can retry.
+       * Email failure must not reverse a successful payment.
+       */
+      await Order.updateOne(
+        { _id: claimedOrder._id },
+        {
+          $unset: {
+            ticketConfirmationEmailSendingAt: 1,
+          },
+        },
+      )
     }
   }
 
@@ -164,9 +315,8 @@ export class PaymentService {
     }
 
     /*
-     * Always verify with Paystack, even if this endpoint is called by
-     * the browser. The backend must not trust a reference supplied by
-     * the client without server-to-server verification.
+     * Always verify with Paystack. The backend must not trust a
+     * reference supplied by the client without server verification.
      */
     const verifiedTransaction =
       await paystackService.verifyTransaction(
@@ -174,11 +324,14 @@ export class PaymentService {
         order.totalAmount,
       )
 
-    const verifiedPaidAt = verifiedTransaction.paidAt
-      ? new Date(verifiedTransaction.paidAt)
-      : new Date()
+    const verifiedPaidAt =
+      verifiedTransaction.paidAt
+        ? new Date(verifiedTransaction.paidAt)
+        : new Date()
 
-    const paidAt = Number.isNaN(verifiedPaidAt.getTime())
+    const paidAt = Number.isNaN(
+      verifiedPaidAt.getTime(),
+    )
       ? new Date()
       : verifiedPaidAt
 
@@ -186,13 +339,20 @@ export class PaymentService {
 
     /*
      * TicketService is independently idempotent through the unique
-     * { order, sequence } index, so webhook retries cannot create
-     * duplicate tickets.
+     * { order, sequence } index, so retries cannot create duplicates.
      */
     const tickets =
       await ticketService.issueTicketsForOrder(
         order._id.toString(),
       )
+
+    /*
+     * Email delivery is separately idempotent. A repeated browser
+     * verification or webhook will not send the email twice.
+     */
+    await this.sendTicketConfirmationEmail(
+      order._id,
+    )
 
     return {
       orderId: order._id.toString(),
@@ -223,8 +383,8 @@ export class PaymentService {
     }
 
     /*
-     * Paystack can send event types that Eventra does not currently
-     * handle. Acknowledge them without treating them as payments.
+     * Acknowledge Paystack events that Eventra does not currently
+     * process without treating them as successful payments.
      */
     if (payload.event !== 'charge.success') {
       return {
@@ -253,4 +413,5 @@ export class PaymentService {
   }
 }
 
-export const paymentService = new PaymentService()
+export const paymentService =
+  new PaymentService()
