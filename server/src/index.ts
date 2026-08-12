@@ -13,6 +13,12 @@ import eventRoutes from './routes/event.routes.js'
 import categoryRoutes from './routes/category.routes.js'
 import organizerRoutes from './routes/organizer.routes.js'
 import adminRoutes from './routes/admin.routes.js'
+import tickettypeRoutes from './routes/tickettype.routes.js'
+import checkoutRoutes from './routes/checkout.routes.js'
+import paymentRoutes from './routes/payment.routes.js'
+import { startOrderExpiryJob } from "./jobs/orderExpiry.js";
+import reservationRoutes from './routes/reservation.routes.js'
+
 
 import {
   appErrorHandler,
@@ -169,7 +175,14 @@ app.get('/', (req: Request, res: Response) => {
 
 // Routes
 app.use('/api/v1/auth', authRoutes)
+app.use('/api/v1/payments', paymentRoutes)
+
+app.use('/api/v1/events', checkoutRoutes)
+app.use('/api/v1/events', tickettypeRoutes)
+app.use('/api/v1/events', reservationRoutes)
 app.use('/api/v1/events', eventRoutes)
+
+
 app.use('/api/v1/users', userRoutes)
 app.use('/api/v1/categories', categoryRoutes)
 app.use('/api/v1/organizers', organizerRoutes)
@@ -187,6 +200,7 @@ const startServer = async (): Promise<void> => {
   let server: any
   try {
     await connectDB()
+    startOrderExpiryJob() // Start the order expiry job after successful DB connection
     server = app.listen(PORT, '0.0.0.0', () => {
       logger.info(`Server running in ${env.NODE_ENV} mode on port ${PORT}`)
       logger.info(`http://localhost:${PORT}`)
