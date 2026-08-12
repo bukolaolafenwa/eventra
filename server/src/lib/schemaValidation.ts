@@ -27,6 +27,18 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 })
 
+export const googleAuthSchema = z.object({
+  credential: z
+    .string({
+      error: 'Google credential is required',
+    })
+    .trim()
+    .min(1, 'Google credential is required'),
+  role: z
+    .enum(['attendee', 'organizer'])
+    .optional(),
+})
+
 export const forgotPasswordSchema = z.object({
   email: z.string().trim().toLowerCase().email('Invalid email address'),
 })
@@ -37,16 +49,39 @@ export const resetPasswordSchema = z.object({
   newPassword: z.string().min(8, 'Password must be at least 8 characters'),
 })
 
+const objectIdSchema = z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
+  message: 'Invalid ID.',
+})
+
 export const checkoutSchema = z.object({
+  customer: z.object({
+    fullname: z.string().trim().min(2, 'fullname is required'),
+    email: z.string().trim().toLowerCase().email('Invalid email address'),
+    phone: z.string().trim().min(7, 'Invalid phone number').optional(),
+  }),
   items: z
     .array(
       z.object({
-        ticketTypeId: z.string().trim().min(1, 'ticketTypeId is required'),
-        quantity: z.number().int().positive('quantity must be a positive integer'),
+        ticketTypeId: objectIdSchema,
+        quantity: z
+          .number()
+          .int()
+          .positive('quantity must be a positive integer'),
       })
     )
     .min(1, 'At least one ticket item is required'),
 })
+
+// export const checkoutSchema = z.object({
+//   items: z
+//     .array(
+//       z.object({
+//         ticketTypeId: z.string().trim().min(1, 'ticketTypeId is required'),
+//         quantity: z.number().int().positive('quantity must be a positive integer'),
+//       })
+//     )
+//     .min(1, 'At least one ticket item is required'),
+// })
 
 export const organizerProfileSchema = z.object({
   businessName: z.string().trim().min(2).optional(),
@@ -65,10 +100,6 @@ export const organizerProfileSchema = z.object({
 export const resolveBankAccountSchema = z.object({
   accountNumber: z.string().trim().min(10).max(10),
   bankCode: z.string().trim().min(2),
-})
-
-const objectIdSchema = z.string().trim().refine((val) => mongoose.Types.ObjectId.isValid(val), {
-  message: 'Invalid ID.',
 })
 
 const venueSchema = z.object({

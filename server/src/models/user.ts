@@ -33,9 +33,9 @@ export interface IUser extends Document {
 
   fullname: string
   email: string
-  password: string
+  password?: string
     googleId?: string
-  phone: string
+  phone?: string
   city?: string
   avatarUrl?: string
   avatarPublicId?: string
@@ -116,6 +116,7 @@ const UserSchema = new Schema<IUser>(
       // Google-created accounts never set a password — required is a
       // function so this only applies to accounts that signed up the
       // normal way. See matchPassword and googleAuth in auth.controller.ts
+      // Google ID token and therefore do not store a local password.
       // for the two places that read this and need to handle it being unset.
       required: function (this: IUser) {
         return !this.googleId
@@ -284,6 +285,10 @@ UserSchema.pre('save', async function () {
 UserSchema.methods.matchPassword = async function (
   candidate: string
 ): Promise<boolean> {
+  if (!this.password) {
+    return false
+  }
+
   return bcrypt.compare(candidate, this.password)
 }
 

@@ -255,7 +255,6 @@ OrderSchema.index({ buyer: 1, createdAt: -1 });
 OrderSchema.index({ "customer.email": 1, createdAt: -1 });
 OrderSchema.index({ event: 1, status: 1 });
 OrderSchema.index({ status: 1, expiresAt: 1 });
-OrderSchema.index({ paystackReference: 1 });
 
 const Order: mongoose.Model<IOrder> =
   (mongoose.models.Order as mongoose.Model<IOrder>) ||
