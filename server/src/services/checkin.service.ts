@@ -98,8 +98,8 @@ export class CheckInService {
         },
       )
         .select(
-          '_id code attendeeName attendeeEmail ticketTypeName status checkedInAt checkedInBy',
-        )
+  'ticketId code attendeeName attendeeEmail ticketTypeName status checkedInAt checkedInBy',
+)
         .lean()
 
     if (!checkedInTicket) {
@@ -155,8 +155,7 @@ export class CheckInService {
     }
 
     return {
-      ticketId:
-        checkedInTicket._id.toString(),
+      ticketId: checkedInTicket.ticketId,
       code: checkedInTicket.code,
       attendeeName:
         checkedInTicket.attendeeName,

@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch --inspect src/index.ts",
-    "create-admin": "tsx src/scripts/create-admin.ts"
+    "create-admin": "tsx src/scripts/create-admin.ts",
+    "backfill:ticket-ids": "tsx src/scripts/backfill-ticket-ids.ts"
   },
   "keywords": [],
   "author": "",

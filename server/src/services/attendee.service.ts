@@ -120,6 +120,7 @@ export class AttendeeService {
       )
 
       filter.$or = [
+        { ticketId: searchPattern },
         { attendeeName: searchPattern },
         { attendeeEmail: searchPattern },
         { attendeePhone: searchPattern },
@@ -140,6 +141,7 @@ export class AttendeeService {
       Ticket.find(filter)
         .select(
           [
+            'ticketId',
             '_id',
             'order',
             'attendee',

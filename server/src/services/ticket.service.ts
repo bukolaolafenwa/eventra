@@ -12,6 +12,13 @@ export class TicketService {
     }
   }
 
+
+ private generateTicketId(): string {
+  return `TK_${randomBytes(8)
+    .toString("hex")
+    .toUpperCase()}`;
+}
+
   private generateTicketCode(): string {
     return `EVT-${randomBytes(10)
       .toString("hex")
@@ -87,6 +94,7 @@ export class TicketService {
 
         ticketDocuments.push({
           order: order._id,
+          ticketId: this.generateTicketId(),
           sequence,
           event: order.event,
           ticketType: item.ticketType,
