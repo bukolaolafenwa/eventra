@@ -5,11 +5,16 @@ import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import { generateOTP, sanitizeUser } from '../lib/utils.js'
 import User from '../models/user.js'
 import { EmailService } from '../services/email.service.js'
+import { googleAuthService } from '../services/google-auth.service.js'
 
 const OTP_TTL_MS = 15 * 60 * 1000 // 15 minutes, matches the email copy
 const MAX_OTP_ATTEMPTS = 5 // Maximum OTP verification attempts before requiring a new OTP
 const MAX_PASSWORD_RESET_ATTEMPTS = 5 // Maximum password reset attempts before requiring a new reset code
 
+interface GoogleAuthRequestBody {
+  credential: string
+  role?: 'attendee' | 'organizer'
+}
 
 function verifyEmailLink(email: string, role: 'attendee' | 'organizer') {
   const path = role === 'organizer' ? '/organizer/auth/verify-email' : '/auth/verify-email'
@@ -250,6 +255,95 @@ await user.save()
     body: sanitizeUser(user.toObject()),
   })
 })
+
+
+export const googleAuth = tryCatchWrapper(
+  async (
+    req: Request<
+      Record<string, never>,
+      unknown,
+      GoogleAuthRequestBody
+    >,
+    res: Response
+  ) => {
+    const googleUser =
+      await googleAuthService.verifyCredential(
+        req.body.credential
+      )
+
+    let user = await User.findOne({
+      $or: [
+        { googleId: googleUser.googleId },
+        { email: googleUser.email },
+      ],
+    })
+
+    if (user) {
+      if (
+        user.googleId &&
+        user.googleId !== googleUser.googleId
+      ) {
+        return sendTsRestError(
+          res,
+          409,
+          'This email is linked to another Google account'
+        )
+      }
+
+      /*
+       * Safely link an existing verified email/password account to
+       * Google after Google has verified ownership of the same email.
+       */
+      if (!user.googleId) {
+        user.googleId = googleUser.googleId
+      }
+
+      if (!user.avatarUrl && googleUser.avatarUrl) {
+        user.avatarUrl = googleUser.avatarUrl
+      }
+
+      if (user.isSuspended) {
+        return sendTsRestError(
+          res,
+          403,
+          'This account has been suspended. Contact support for help'
+        )
+      }
+
+      user.isVerified = true
+      user.lastLogin = new Date()
+      user.failedLoginAttempts = 0
+      user.lockUntil = undefined
+
+      await user.save()
+    } else {
+      const resolvedRole =
+        req.body.role === 'organizer'
+          ? 'organizer'
+          : 'attendee'
+
+      user = await User.create({
+        googleId: googleUser.googleId,
+        fullname: googleUser.fullname,
+        email: googleUser.email,
+        avatarUrl: googleUser.avatarUrl,
+        role: resolvedRole,
+        isVerified: true,
+        lastLogin: new Date(),
+      })
+    }
+
+    req.session.userId = user._id.toString()
+    req.session.role = user.role
+
+    return sendTsRestSuccess(res, 200, {
+      success: true,
+      message: 'Google authentication successful',
+      body: sanitizeUser(user.toObject()),
+    })
+  }
+)
+
 
 export const logout = tryCatchWrapper(async (req: Request, res: Response) => {
   req.session.destroy(err => {

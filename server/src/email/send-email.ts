@@ -53,7 +53,7 @@ const sendViaBrevo = async (
     }
 
     if (attachments && attachments.length > 0) {
-      payload.attachments = attachments.map(att => ({
+      payload.attachment = attachments.map(att => ({
         name: att.filename,
         content:
           typeof att.content === 'string'

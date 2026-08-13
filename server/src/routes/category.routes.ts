@@ -6,8 +6,6 @@ import {
   getAllCategoriesAdminController,
    getCategoryByIdController,
      updateCategoryController,
-    deleteCategoryController,
-    restoreCategoryController,
     
 } from '../controllers/category.controller.js'
 
@@ -18,7 +16,7 @@ import {
 
 import { validateFormData } from '../middlewares/schema.middleware.js'
 import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
-import { clearCache } from '../middlewares/cache.middleware.js'
+import { cacheMiddleware, clearCache } from '../middlewares/cache.middleware.js'
 
 import { createCategorySchema, updateCategorySchema, } from '../lib/schemaValidation.js'
 
@@ -29,7 +27,7 @@ const router = Router()
  * @desc    Retrieve all categories
  * @access  Public
  */
-router.get('/', getAllCategoriesController)
+router.get('/', cacheMiddleware(60), getAllCategoriesController)
 
 
 
@@ -52,7 +50,7 @@ router.get(
  * @desc    Retrieve a category by ID
  * @access  Public
  */
-router.get('/:id', getCategoryByIdController)
+router.get('/:id', cacheMiddleware(60), getCategoryByIdController)
 
 
 /**
@@ -84,37 +82,6 @@ router.patch(
   validateFormData(updateCategorySchema),
   clearCache('categories'),
   updateCategoryController
-)
-
-
-/**
- * @route   DELETE /api/v1/categories/:id
- * @desc    Deactivate a category (soft delete)
- * @access  Admin
- */
-router.delete(
-  '/:id',
-  customRateLimiter(5),
-  verifySession,
-  requireAdmin,
-  clearCache('categories'),
-  deleteCategoryController
-)
-
-
-
-/**
- * @route   PATCH /api/v1/categories/:id/restore
- * @desc    Restore a deactivated category
- * @access  Admin
- */
-router.patch(
-  '/:id/restore',
-  customRateLimiter(5),
-  verifySession,
-  requireAdmin,
-  clearCache('categories'),
-  restoreCategoryController
 )
 
 

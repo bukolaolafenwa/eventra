@@ -5,12 +5,14 @@ import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import {
   buildPaginationMeta,
   escapeRegExp,
+  getDateRangeForWhen,
   getPagination,
   isValidObjectId,
   slugify,
 } from '../lib/utils.js'
 import Category from '../models/category.js'
 import Event from '../models/event.js'
+import User from '../models/user.js'
 
 const EDITABLE_STATUSES = ['draft', 'rejected']
 
@@ -99,9 +101,9 @@ export const updateEventLineup = tryCatchWrapper(async (req: Request, res: Respo
   })
 })
 
-// TODO: restore the organizer-approval check (needs the User model) and the
-// paid-event bank-details / ticket-type checks (needs the TicketType model)
-// once those imports are available.
+// TODO: restore the ticket-type checks (needs the TicketType model) once
+// that import is available — a paid event should have at least one active
+// ticket type before it can go to review.
 export const submitEventForApproval = tryCatchWrapper(async (req: Request, res: Response) => {
   const { id } = req.params
   const event = await Event.findOne({ _id: id, organizer: req.session.userId })
@@ -113,6 +115,26 @@ export const submitEventForApproval = tryCatchWrapper(async (req: Request, res: 
     return sendTsRestError(res, 400, 'This event has already been submitted')
   }
 
+  const organizer = await User.findById(req.session.userId)
+  if (!organizer || !organizer.organizerProfile) {
+    return sendTsRestError(res, 400, 'Complete your organizer profile before submitting an event')
+  }
+  if (organizer.organizerProfile.approvalStatus !== 'approved') {
+    return sendTsRestError(res, 400, 'Your organizer profile must be approved before submitting an event')
+  }
+  // PRD Section 6 / organizer.controller.ts's upsertOrganizerProfile comment:
+  // bank details are only required for paid events to go live, not free ones.
+  if (event.type === 'paid' && !organizer.organizerProfile.isPayoutReady) {
+    return sendTsRestError(res, 400, 'Add your bank account details before submitting a paid event')
+  }
+
+  // A draft can sit around indefinitely, or a rejected one gets resubmitted
+  // without its date being touched — either way, don't let a startDate that's
+  // already passed enter the approval queue.
+  if (event.startDate < new Date()) {
+    return sendTsRestError(res, 400, 'This event\'s start date has already passed — update it before submitting')
+  }
+
   event.status = 'pending_approval'
   event.rejectionReason = undefined
   await event.save()
@@ -120,6 +142,32 @@ export const submitEventForApproval = tryCatchWrapper(async (req: Request, res: 
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Event submitted for admin approval',
+    body: event.toObject(),
+  })
+})
+
+// Lets an organizer pull an event back out of the admin's queue before it's
+// been reviewed — e.g. they found a venue conflict or changed their mind.
+// Deliberately organizer-only (no admin bypass): once an admin has actually
+// approved/rejected it, this is no longer the right lever — cancelEvent
+// covers withdrawing a live approved event instead.
+export const withdrawEvent = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const event = await Event.findOne({ _id: id, organizer: req.session.userId })
+
+  if (!event) {
+    return sendTsRestError(res, 404, 'Event not found')
+  }
+  if (event.status !== 'pending_approval') {
+    return sendTsRestError(res, 400, 'Only an event awaiting approval can be withdrawn')
+  }
+
+  event.status = 'draft'
+  await event.save()
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Event withdrawn — back to draft',
     body: event.toObject(),
   })
 })
@@ -161,13 +209,11 @@ export const listMyEvents = tryCatchWrapper(async (req: Request, res: Response) 
   })
 })
 
-// Public — only ever surfaces admin-approved events.
-// TODO: restore the "when" (today / this-weekend / this-week / this-month)
-// filter once a getDateRangeForWhen helper is imported.
+// Public — only ever surfaces admin-approved/postponed events.
 export const listPublicEvents = tryCatchWrapper(async (req: Request, res: Response) => {
   const { page, limit, skip } = getPagination(req.query)
 
-  const filter: Record<string, any> = { status: 'approved' }
+  const filter: Record<string, any> = { status: { $in: ['approved', 'postponed'] } }
 
   // Category — accepts a single id or a comma-separated list, e.g. ?category=a,b,c
   if (req.query.category && typeof req.query.category === 'string') {
@@ -180,6 +226,14 @@ export const listPublicEvents = tryCatchWrapper(async (req: Request, res: Respon
     filter['venue.city'] = new RegExp(escapeRegExp(req.query.city), 'i')
   }
   if (req.query.type === 'free' || req.query.type === 'paid') filter.type = req.query.type
+
+  // Date — today / this-weekend / this-week / this-month
+  if (typeof req.query.when === 'string') {
+    const range = getDateRangeForWhen(req.query.when)
+    if (range) {
+      filter.startDate = { $gte: range.from, $lt: range.to }
+    }
+  }
 
   // Price — filters on the denormalized Event.minPrice (see models/event.ts)
   const minPrice = Number(req.query.minPrice)
@@ -251,8 +305,11 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
     ticketsSoldCount: event.ticketsSoldCount,
     revenueTotal: event.revenueTotal,
     payout: {
-      // Funds are held until a few days after the event — see PAYOUT_DELAY_DAYS in ticket.service.ts
-      amountDue: event.revenueTotal,
+      // PRD Section 8: Eventra retains 5% commission, organizer gets the
+      // remainder. revenueTotal is gross ticket sales — this is what's
+      // actually owed to the organizer, held until a few days after the
+      // event (see PAYOUT_DELAY_DAYS in ticket.service.ts).
+      amountDue: Math.round(event.revenueTotal * 0.95),
     },
   }
 
@@ -302,19 +359,41 @@ export const postponeEvent = tryCatchWrapper(async (req: Request, res: Response)
   const { newStartDate } = req.body
   const isAdmin = req.session.role === 'admin'
 
-  if (!newStartDate) {
-    return sendTsRestError(res, 400, 'newStartDate is required')
-  }
-
   const event = await Event.findOne(isAdmin ? { _id: id } : { _id: id, organizer: req.session.userId })
   if (!event) {
     return sendTsRestError(res, 404, 'Event not found')
   }
-  if (event.status !== 'approved') {
-    return sendTsRestError(res, 400, 'Only a live approved event can be postponed')
+  // Allows postponing again even if the event is already postponed — status
+  // never moves back to 'approved' automatically once the new date arrives,
+  // so restricting this to only 'approved' would permanently lock an event
+  // out of ever being postponed a second time. The newStartDate-after-current
+  // check below already guarantees forward progress regardless.
+  if (event.status !== 'approved' && event.status !== 'postponed') {
+    return sendTsRestError(res, 400, 'Only a live approved or postponed event can be postponed')
+  }
+  // Zod (postponeEventSchema) already confirms newStartDate isn't in the past —
+  // this additionally confirms it's actually later than the event's current
+  // date, which needs the document and can't be checked in the schema alone.
+  if (new Date(newStartDate) <= event.startDate) {
+    return sendTsRestError(res, 400, 'New date must be after the event\'s current start date')
   }
 
+  // startDate is the single source of truth Explore/search sort and filter
+  // by (see listPublicEvents) — updating it here is what actually moves a
+  // postponed event to its correct place in date-based results. postponedTo
+  // is kept too, purely as a record of "this event was postponed."
+  //
+  // For multi-day events (endDate set), shift endDate by the same gap so
+  // the event keeps its original length — otherwise startDate could end up
+  // later than the existing endDate, and nothing at the DB layer guards
+  // against that (the endDate>=startDate check only lives in Zod, which
+  // postponeEventSchema doesn't include).
+  if (event.endDate) {
+    const durationMs = event.endDate.getTime() - event.startDate.getTime()
+    event.endDate = new Date(new Date(newStartDate).getTime() + durationMs)
+  }
   event.status = 'postponed'
+  event.startDate = new Date(newStartDate)
   event.postponedTo = new Date(newStartDate)
   await event.save()
 
@@ -329,7 +408,7 @@ export const postponeEvent = tryCatchWrapper(async (req: Request, res: Response)
 export const getEventBySlug = tryCatchWrapper(async (req: Request, res: Response) => {
   const { slug } = req.params
 
-  const event = await Event.findOne({ slug, status: 'approved' })
+  const event = await Event.findOne({ slug, status: { $in: ['approved', 'postponed'] } })
     .populate('category', 'name slug')
     .populate('organizer', 'fullname organizerProfile.businessName')
     .lean()

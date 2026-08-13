@@ -9,7 +9,7 @@ const pinoHttp = pinoHttpModule.default || pinoHttpModule
 // Determine if we're in development mode
 const isDev = env.NODE_ENV === 'development'
 
-class ErrorResponse extends Error {
+export class ErrorResponse extends Error {
   statusCode: number
 
   constructor(message: string, statusCode: number) {
@@ -77,10 +77,34 @@ export const appErrorHandler = (err: Error | ErrorResponse, req: Request, res: R
   }
 
   // Mongoose duplicate key
+  // if ((err as any).code === 11000) {
+  //   const message = 'Duplicate field value entered'
+  //   error = new ErrorResponse(message, 400)
+  // }
+
   if ((err as any).code === 11000) {
-    const message = 'Duplicate field value entered'
-    error = new ErrorResponse(message, 400)
+  const duplicateError = err as {
+    keyPattern?: Record<string, number>
+    keyValue?: Record<string, unknown>
   }
+
+  logger.error(
+    {
+      keyPattern: duplicateError.keyPattern,
+      keyValue: duplicateError.keyValue,
+    },
+    'MongoDB duplicate-key details'
+  )
+
+  const duplicateField =
+    Object.keys(duplicateError.keyPattern ?? {})[0] ??
+    'field'
+
+  error = new ErrorResponse(
+    `A record with this ${duplicateField} already exists`,
+    409
+  )
+}
 
   // Mongoose validation error
   if (err.name === 'ValidationError') {
