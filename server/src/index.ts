@@ -20,6 +20,7 @@ import { startOrderExpiryJob } from "./jobs/orderExpiry.js";
 import reservationRoutes from './routes/reservation.routes.js'
 import checkInRoutes from './routes/checkin.routes.js'
 import attendeeRoutes from './routes/attendee.routes.js'
+import ticketHistoryRoutes from './routes/ticket-history.routes.js'
 
 import {
   appErrorHandler,
@@ -177,6 +178,7 @@ app.get('/', (req: Request, res: Response) => {
 // Routes
 app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/payments', paymentRoutes)
+app.use('/api/v1/tickets', ticketHistoryRoutes)
 
 app.use('/api/v1/events', checkoutRoutes)
 app.use('/api/v1/events', tickettypeRoutes)
