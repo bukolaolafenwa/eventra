@@ -2,6 +2,7 @@ import mongoose, { Document, Schema } from "mongoose";
 
 export interface ITicket extends Document {
   _id: mongoose.Types.ObjectId;
+  ticketId: string;
   order: mongoose.Types.ObjectId;
   sequence: number;
   event: mongoose.Types.ObjectId;
@@ -26,6 +27,12 @@ export interface ITicket extends Document {
 
 const TicketSchema = new Schema<ITicket>(
   {
+    ticketId: {
+      type: String,
+      required: true,
+      trim: true,
+      uppercase: true,
+    },
     order: {
       type: Schema.Types.ObjectId,
       ref: "Order",
@@ -128,6 +135,10 @@ const TicketSchema = new Schema<ITicket>(
 );
 
 
+TicketSchema.index(
+  { ticketId: 1 },
+  { unique: true },
+);
 TicketSchema.index(
   { order: 1, sequence: 1 },
   { unique: true },
