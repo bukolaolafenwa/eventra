@@ -1,9 +1,7 @@
 import mongoose from "mongoose";
 
 import Event, { IEvent } from "../models/event.js";
-import TicketType, {
-  ITicketType,
-} from "../models/tickettype.js";
+import TicketType, { ITicketType } from "../models/tickettype.js";
 import { ErrorResponse } from "../middlewares/error.middleware.js";
 
 export interface CreateTicketTypeInput {
@@ -57,11 +55,7 @@ export class TicketTypeService {
       );
     }
 
-    if (
-      ["pending_approval", "cancelled", "suspended"].includes(
-        event.status,
-      )
-    ) {
+    if (["pending_approval", "cancelled", "suspended"].includes(event.status)) {
       throw new ErrorResponse(
         `Ticket types cannot be managed while the event is ${event.status}`,
         409,
@@ -100,11 +94,7 @@ export class TicketTypeService {
     salesStartDate?: Date,
     salesEndDate?: Date,
   ): void {
-    if (
-      salesStartDate &&
-      salesEndDate &&
-      salesEndDate <= salesStartDate
-    ) {
+    if (salesStartDate && salesEndDate && salesEndDate <= salesStartDate) {
       throw new ErrorResponse(
         "Sales end date must be after sales start date",
         400,
@@ -112,10 +102,7 @@ export class TicketTypeService {
     }
 
     if (salesStartDate && salesStartDate >= event.startDate) {
-      throw new ErrorResponse(
-        "Ticket sales must start before the event",
-        400,
-      );
+      throw new ErrorResponse("Ticket sales must start before the event", 400);
     }
 
     if (salesEndDate && salesEndDate > event.startDate) {
@@ -126,47 +113,45 @@ export class TicketTypeService {
     }
   }
 
- private async validateEventCapacity(
-  event: IEvent,
-  quantity: number,
-  excludedTicketTypeId?: string,
-): Promise<void> {
-  if (event.capacity === undefined) {
-    return;
-  }
+  private async validateEventCapacity(
+    event: IEvent,
+    quantity: number,
+    excludedTicketTypeId?: string,
+  ): Promise<void> {
+    if (event.capacity === undefined) {
+      return;
+    }
 
- const filter: {
-  event: mongoose.Types.ObjectId;
-  _id?: { $ne: mongoose.Types.ObjectId };
-} = {
-  event: event._id,
-};
-
-  if (excludedTicketTypeId) {
-    filter._id = {
-      $ne: new mongoose.Types.ObjectId(excludedTicketTypeId),
+    const filter: {
+      event: mongoose.Types.ObjectId;
+      _id?: { $ne: mongoose.Types.ObjectId };
+    } = {
+      event: event._id,
     };
-  }
 
-  const otherTicketTypes = await TicketType.find(filter)
-    .select("quantity")
-    .lean();
+    if (excludedTicketTypeId) {
+      filter._id = {
+        $ne: new mongoose.Types.ObjectId(excludedTicketTypeId),
+      };
+    }
 
-  const existingQuantity = otherTicketTypes.reduce(
-    (
-      total: number,
-      ticketType: { quantity: number },
-    ): number => total + ticketType.quantity,
-    0,
-  );
+    const otherTicketTypes = await TicketType.find(filter)
+      .select("quantity")
+      .lean();
 
-  if (existingQuantity + quantity > event.capacity) {
-    throw new ErrorResponse(
-      "Total ticket quantity cannot exceed event capacity",
-      400,
+    const existingQuantity = otherTicketTypes.reduce(
+      (total: number, ticketType: { quantity: number }): number =>
+        total + ticketType.quantity,
+      0,
     );
+
+    if (existingQuantity + quantity > event.capacity) {
+      throw new ErrorResponse(
+        "Total ticket quantity cannot exceed event capacity",
+        400,
+      );
+    }
   }
-}
 
   private async recalculateEventMinimumPrice(
     eventId: mongoose.Types.ObjectId,
@@ -252,16 +237,16 @@ export class TicketTypeService {
       .sort({ price: 1 })
       .lean();
 
-      return ticketTypes.map((ticketType) => ({
-        ...ticketType,
-         quantityRemaining: Math.max(
-          0,
-          ticketType.quantity -
-           ticketType.quantitySold -
-            (ticketType.quantityReserved ?? 0),
-   ),
-  }));
-    }
+    return ticketTypes.map((ticketType) => ({
+      ...ticketType,
+      quantityRemaining: Math.max(
+        0,
+        ticketType.quantity -
+          ticketType.quantitySold -
+          (ticketType.quantityReserved ?? 0),
+      ),
+    }));
+  }
 
   async getOrganizerTicketTypes(
     eventId: string,
@@ -274,16 +259,15 @@ export class TicketTypeService {
       .sort({ price: 1 })
       .lean();
 
-
-      return ticketTypes.map((ticketType) => ({
-       ...ticketType,
-        quantityRemaining: Math.max(
-         0,
+    return ticketTypes.map((ticketType) => ({
+      ...ticketType,
+      quantityRemaining: Math.max(
+        0,
         ticketType.quantity -
-         ticketType.quantitySold -
+          ticketType.quantitySold -
           (ticketType.quantityReserved ?? 0),
-    ),
-  }));
+      ),
+    }));
   }
 
   async updateTicketType(
@@ -307,45 +291,28 @@ export class TicketTypeService {
     const nextPrice = payload.price ?? ticketType.price;
     const nextQuantity = payload.quantity ?? ticketType.quantity;
     const nextPurchaseLimit =
-      payload.purchaseLimitPerPerson ??
-      ticketType.purchaseLimitPerPerson;
+      payload.purchaseLimitPerPerson ?? ticketType.purchaseLimitPerPerson;
     const nextSalesStartDate =
       payload.salesStartDate ?? ticketType.salesStartDate;
-    const nextSalesEndDate =
-      payload.salesEndDate ?? ticketType.salesEndDate;
+    const nextSalesEndDate = payload.salesEndDate ?? ticketType.salesEndDate;
 
     this.validatePrice(nextPrice);
-    this.validatePurchaseLimit(
-      nextPurchaseLimit,
-      nextQuantity,
-    );
-    this.validateSalesPeriod(
-      event,
-      nextSalesStartDate,
-      nextSalesEndDate,
-    );
-
-   if (
-    nextQuantity <
-    ticketType.quantitySold +
-     (ticketType.quantityReserved ?? 0)
-     ) {
-      throw new ErrorResponse(
-    "Ticket quantity cannot be lower than the quantity already sold or reserved",
-    400,
-  );
-}
-
-    await this.validateEventCapacity(
-      event,
-      nextQuantity,
-      ticketTypeId,
-    );
+    this.validatePurchaseLimit(nextPurchaseLimit, nextQuantity);
+    this.validateSalesPeriod(event, nextSalesStartDate, nextSalesEndDate);
 
     if (
-      payload.name &&
-      payload.name !== ticketType.name
+      nextQuantity <
+      ticketType.quantitySold + (ticketType.quantityReserved ?? 0)
     ) {
+      throw new ErrorResponse(
+        "Ticket quantity cannot be lower than the quantity already sold or reserved",
+        400,
+      );
+    }
+
+    await this.validateEventCapacity(event, nextQuantity, ticketTypeId);
+
+    if (payload.name && payload.name !== ticketType.name) {
       const duplicate = await TicketType.exists({
         event: event._id,
         name: payload.name,
@@ -385,15 +352,12 @@ export class TicketTypeService {
       throw new ErrorResponse("Ticket type not found", 404);
     }
 
-    if (
-     ticketType.quantitySold > 0 ||
-      (ticketType.quantityReserved ?? 0) > 0
-      ) {
-       throw new ErrorResponse(
-    "A ticket type with sold or reserved inventory cannot be deleted; deactivate it instead",
-    409,
-  );
-}
+    if (ticketType.quantitySold > 0 || (ticketType.quantityReserved ?? 0) > 0) {
+      throw new ErrorResponse(
+        "A ticket type with sold or reserved inventory cannot be deleted; deactivate it instead",
+        409,
+      );
+    }
 
     await ticketType.deleteOne();
     await this.recalculateEventMinimumPrice(event._id);

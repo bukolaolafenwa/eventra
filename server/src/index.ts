@@ -21,6 +21,11 @@ import reservationRoutes from './routes/reservation.routes.js'
 import checkInRoutes from './routes/checkin.routes.js'
 import attendeeRoutes from './routes/attendee.routes.js'
 import ticketHistoryRoutes from './routes/ticket-history.routes.js'
+import ticketRoutes from './routes/ticket.routes.js'
+import promotionRoutes from './routes/promotion.routes.js'
+import cronRoutes from './routes/cron.routes.js'
+import uploadRoutes from './routes/upload.routes.js'
+
 
 import {
   appErrorHandler,
@@ -53,6 +58,11 @@ declare module 'express-session' {
   interface SessionData {
     userId?: string
     role?: 'attendee' | 'organizer' | 'admin'
+    // Set once a guest proves ownership of an email via the OTP flow (see
+    // verifyGuestTicketAccess in ticket.controller.ts) — trusted the same
+    // way userId is, but only for actions scoped to tickets/orders with a
+    // matching guestEmail/attendeeEmail. Never implies an actual account.
+    guestEmail?: string
   }
 }
 
@@ -179,6 +189,10 @@ app.get('/', (req: Request, res: Response) => {
 app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/payments', paymentRoutes)
 app.use('/api/v1/tickets', ticketHistoryRoutes)
+app.use('/api/v1/tickets', ticketRoutes)
+app.use('/api/v1/promotions', promotionRoutes)
+app.use('/api', cronRoutes)
+app.use('/api/v1/uploads', uploadRoutes)
 
 app.use('/api/v1/events', checkoutRoutes)
 app.use('/api/v1/events', tickettypeRoutes)

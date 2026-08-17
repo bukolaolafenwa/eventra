@@ -366,6 +366,14 @@ export const refundRequestSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 })
 
+export const rejectRefundRequestSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(3, 'Rejection reason is required')
+    .max(500, 'Rejection reason cannot exceed 500 characters'),
+})
+
 export const checkInSchema = z.object({
   code: z.string().trim().min(1, 'code is required'),
 })
@@ -379,4 +387,13 @@ export const postponeEventSchema = z.object({
     date => date >= new Date(new Date().setHours(0, 0, 0, 0)),
     { message: 'New date cannot be in the past' }
   ),
+})
+
+export const guestTicketAccessRequestSchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email address'),
+})
+
+export const guestTicketAccessVerifySchema = z.object({
+  email: z.string().trim().toLowerCase().email('Enter a valid email address'),
+  otp: z.string().trim().length(6, 'Enter the 6-digit code'),
 })
