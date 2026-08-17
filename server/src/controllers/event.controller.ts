@@ -12,11 +12,11 @@ import {
 } from '../lib/utils.js'
 import Category from '../models/category.js'
 import Event from '../models/event.js'
-import Order from '../models/order.js'
 import Ticket from '../models/ticket.js'
 import TicketType from '../models/tickettype.js'
 import User from '../models/user.js'
-import { paystackService } from '../services/paystack.service.js'
+import Order from '../models/order.js'
+
 
 const EDITABLE_STATUSES = ['draft', 'rejected']
 
@@ -297,7 +297,7 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
     return sendTsRestError(res, 404, 'Event not found')
   }
 
-  const [ticketTypes, checkedInCount, recentAttendees] = await Promise.all([
+  const [ticketTypes, checkedInCount, recentAttendees, payoutSummary] = await Promise.all([
     event.type === 'paid'
       ? TicketType.find({ event: event._id })
           .select('name price quantity quantitySold quantityReserved purchaseLimitPerPerson isActive')
@@ -309,6 +309,28 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
       .sort({ createdAt: -1 })
       .limit(5)
       .lean(),
+
+      Order.aggregate<{ amountDue: number }>([
+  {
+    $match: {
+      event: event._id,
+      status: 'paid',
+    },
+  },
+  {
+    $group: {
+      _id: null,
+      amountDue: {
+        $sum: {
+          $subtract: [
+            '$subtotal',
+            '$serviceFee',
+          ],
+        },
+      },
+    },
+  },
+]),
   ])
 
   const body = {
@@ -338,12 +360,11 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
       quantityRemaining: Math.max(tt.quantity - tt.quantitySold - tt.quantityReserved, 0),
     })),
     payout: {
-      // PRD Section 8: Eventra retains 5% commission, organizer gets the
-      // remainder. revenueTotal is gross ticket sales — this is what's
-      // actually owed to the organizer, held until a few days after the
-      // event (see PAYOUT_DELAY_DAYS in ticket.service.ts).
-      amountDue: Math.round(event.revenueTotal * 0.95),
-    },
+  // Eventra's stored fee is deducted from each completed paid order.
+  // This avoids recalculating and potentially rounding the fee differently.
+  amountDue:
+    payoutSummary[0]?.amountDue ?? 0,
+},
   }
 
   return sendTsRestSuccess(res, 200, {
@@ -354,12 +375,9 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
 })
 
 /**
- * Cancels a live event. Paid orders are refunded in full for whatever
- * hasn't already been refunded (a ticket-level refund request may have
- * partially refunded an order before the event itself was cancelled), and
- * every ticket on the event is invalidated — paid tickets marked
- * 'refunded', free reservations marked 'cancelled' since there's no
- * payment behind them to refund.
+ * Cancels a live free event and invalidates its active reservations.
+ * Paid-event cancellation is temporarily unavailable until refund
+ * processing and reconciliation are safely implemented.
  */
 export const cancelEvent = tryCatchWrapper(async (req: Request, res: Response) => {
   const { id } = req.params
@@ -372,40 +390,35 @@ export const cancelEvent = tryCatchWrapper(async (req: Request, res: Response) =
   if (event.status !== 'approved' && event.status !== 'postponed') {
     return sendTsRestError(res, 400, 'Only a live (approved or postponed) event can be cancelled')
   }
+    if (event.type === 'paid') {
+    return sendTsRestError(
+      res,
+      501,
+      'Paid-event cancellation is not available until refund processing and reconciliation are fully implemented',
+    )
+  }
+  const cancelledAt = new Date()
 
   event.status = 'cancelled'
-  event.cancelledAt = new Date()
+  event.cancelledAt = cancelledAt
   await event.save()
 
-  if (event.type === 'paid') {
-    const paidOrders = await Order.find({ event: event._id, status: { $in: ['paid', 'partially_refunded'] as Array<'paid' | 'partially_refunded'> } })
-
-    for (const order of paidOrders) {
-      const remainingAmount = order.totalAmount - order.refundedAmount
-      try {
-        if (remainingAmount > 0 && order.paystackReference) {
-          await paystackService.refundTransaction({
-            transactionReference: order.paystackReference,
-            amountNaira: remainingAmount,
-            reason: 'Event cancelled by organizer',
-          })
-        }
-        order.refundedAmount = order.totalAmount
-        order.status = 'refunded'
-        await order.save()
-        await Ticket.updateMany({ order: order._id, status: { $in: ['active', 'used'] as Array<'active' | 'used'> } }, { status: 'refunded' })
-      } catch (error: any) {
-        // Logged inside paystackService — leave this order for manual admin
-        // follow-up rather than failing the whole cancellation over one bad refund.
-      }
-    }
-  } else {
-    await Ticket.updateMany({ event: event._id, status: 'active' }, { status: 'cancelled' })
-  }
+  await Ticket.updateMany(
+    {
+      event: event._id,
+      status: 'active',
+    },
+    {
+      $set: {
+        status: 'cancelled',
+        cancelledAt,
+      },
+    },
+  )
 
   return sendTsRestSuccess(res, 200, {
     success: true,
-    message: event.type === 'paid' ? 'Event cancelled. Paid attendees are being refunded' : 'Event cancelled',
+    message: 'Event cancelled',
     body: event.toObject(),
   })
 })

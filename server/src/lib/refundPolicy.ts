@@ -20,8 +20,12 @@ export const checkRefundEligibility = (
   now: Date = new Date()
 ): RefundEligibility => {
   if (eventStatus === 'cancelled') {
-    return { allowed: false, reason: 'This event was cancelled — refunds were issued automatically' }
+  return {
+    allowed: false,
+    reason:
+      'Refund requests cannot be submitted for a cancelled event. Please contact Eventra support.',
   }
+}
 
   // A postponed event always allows a refund request, regardless of the original policy.
   if (eventStatus === 'postponed') {

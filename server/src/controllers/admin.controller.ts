@@ -327,86 +327,76 @@ export const listRefundRequests = tryCatchWrapper(async (req: Request, res: Resp
   })
 })
 
-export const approveRefundRequest = tryCatchWrapper(async (req: Request, res: Response) => {
-  const { id } = req.params
+//  * refund. Paystack processing is temporarily unavailable until safe
+//  * reconciliation and retry handling are implemented.
+export const approveRefundRequest = tryCatchWrapper(
+  async (_req: Request, res: Response) => {
+    return sendTsRestError(
+      res,
+      501,
+      'Refund processing is not available yet',
+    )
+  },
+)
 
-  const refundRequest = await RefundRequest.findOne({ _id: id, status: 'pending' })
-  if (!refundRequest) {
-    return sendTsRestError(res, 404, 'No pending refund request found with this id')
-  }
+/**
+ * Atomically rejects a pending refund request and records the admin,
+ * reason and time of rejection. The pending-status condition ensures
+ * that simultaneous review attempts cannot update the same request twice.
+ */
+export const rejectRefundRequest =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const { id } = req.params
+      const { reason } = req.body as {
+        reason: string
+      }
 
-  const [ticket, order] = await Promise.all([
-    Ticket.findById(refundRequest.ticket),
-    Order.findById(refundRequest.order),
-  ])
-  if (!ticket || !order || !order.paystackReference) {
-    return sendTsRestError(res, 404, 'The ticket or order for this request no longer exists')
-  }
+      const refundRequest =
+        await RefundRequest.findOneAndUpdate(
+          {
+            _id: id,
+            status: 'pending',
+          },
+          {
+            $set: {
+              status: 'rejected',
+              rejectionReason: reason,
+              rejectedBy:
+                req.session.userId,
+              rejectedAt: new Date(),
+            },
+          },
+          {
+            new: true,
+            runValidators: true,
+          },
+        )
 
-  try {
-    const refund = await paystackService.refundTransaction({
-      transactionReference: order.paystackReference,
-      amountNaira: refundRequest.amount,
-      reason: refundRequest.reason,
-    })
+      if (!refundRequest) {
+        return sendTsRestError(
+          res,
+          404,
+          'No pending refund request found with this id',
+        )
+      }
 
-    ticket.status = 'refunded'
-    await ticket.save()
-
-    order.refundedAmount = (order.refundedAmount ?? 0) + refundRequest.amount
-    const remainingActiveTickets = await Ticket.countDocuments({
-      order: order._id,
-      status: { $in: ['active', 'used'] as Array<'active' | 'used'> },
-    })
-    order.status = remainingActiveTickets > 0 ? 'partially_refunded' : 'refunded'
-    await order.save()
-
-    refundRequest.status = 'processed'
-    refundRequest.paystackRefundReference = refund.reference
-    refundRequest.processedAt = new Date()
-    await refundRequest.save()
-
-    Promise.all([User.findById(refundRequest.requestedBy), Event.findById(refundRequest.event)])
-      .then(([requester, event]) => {
-        if (requester && event) {
-          EmailService.sendRefundProcessedEmail(
-            requester,
-            event.title,
-            `\u20a6${refundRequest.amount.toLocaleString('en-NG')}`
-          ).catch(error => logger.error({ err: error }, `Refund-processed email failed for request ${refundRequest._id}`))
-        }
-      })
-      .catch(error => logger.error({ err: error }, `Could not load requester/event for refund ${refundRequest._id}`))
-
-    return sendTsRestSuccess(res, 200, {
-      success: true,
-      message: 'Refund processed',
-      body: refundRequest.toObject(),
-    })
-  } catch (error: any) {
-    return sendTsRestError(res, 502, error.message || 'Refund failed with Paystack')
-  }
-})
-
-export const rejectRefundRequest = tryCatchWrapper(async (req: Request, res: Response) => {
-  const { id } = req.params
-  const { reason } = req.body as { reason?: string }
-
-  const refundRequest = await RefundRequest.findOne({ _id: id, status: 'pending' })
-  if (!refundRequest) {
-    return sendTsRestError(res, 404, 'No pending refund request found with this id')
-  }
-
-  refundRequest.status = 'rejected'
-  refundRequest.rejectionReason = reason
-  await refundRequest.save()
-
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Refund request rejected',
-    body: refundRequest.toObject(),
-  })
-})
+      return sendTsRestSuccess(
+        res,
+        200,
+        {
+          success: true,
+          message:
+            'Refund request rejected',
+          body:
+            refundRequest.toObject(),
+        },
+      )
+    },
+  )
 
 /**
  * Model already supports status: 'suspended' + suspendedReason (see

@@ -5,26 +5,18 @@ import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 
 /**
- * STILL STUBBED — deliberately not wired to jobs/payoutCron.ts's
- * processDuePayouts(). That function calls a paystackService method that
- * doesn't exist (initiateTransfer), reads Order fields that don't exist
- * on the current model (payoutStatus, organizerEarnings), and depends on
- * organizerProfile.paystackRecipientCode — which nothing in this codebase
- * currently populates (see admin.controller.ts's approveOrganizer comment:
- * transfer-recipient creation was removed and never replaced). Wiring this
- * up as-is would throw on every cron invocation. This needs a real design
- * decision — how/when is a Paystack transfer recipient actually created
- * for an organizer? — before it's safe to re-enable. The organizer payout
- * *amount* is already visible read-only via listOrganizerPayouts in
- * organizer.controller.ts; this cron is specifically about automating the
- * actual money transfer.
+ * Reserved endpoint for the future organizer-payout scheduler.
+ *
+ * Automated transfers remain unavailable until Eventra has persistent
+ * payout records, Paystack transfer recipients, unique transfer references,
+ * webhook reconciliation and safe retry handling.
  */
 export const checkPayoutCron = tryCatchWrapper(async (req: Request, res: Response) => {
   if (!isAuthorizedCronCall(req)) {
     return sendTsRestError(res, 401, 'Unauthorized: invalid or missing CRON_SECRET')
   }
 
-  return sendTsRestError(res, 501, 'Automated payout transfers are not wired up yet — see the comment above this handler')
+  return sendTsRestError(res, 501, 'Automated organizer payouts are not available yet')
 })
 
 export const checkPromotionExpiryCron = tryCatchWrapper(async (req: Request, res: Response) => {

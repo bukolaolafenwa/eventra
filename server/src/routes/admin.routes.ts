@@ -20,7 +20,7 @@ import {
 } from '../controllers/admin.controller.js'
 import { requireAdmin, verifySession } from '../middlewares/auth.middleware.js'
 import { validateFormData } from '../middlewares/schema.middleware.js'
-import { createCategorySchema, rejectEventSchema, suspendEventSchema, updateCategorySchema } from '../lib/schemaValidation.js'
+import { createCategorySchema, rejectEventSchema, rejectRefundRequestSchema, suspendEventSchema, updateCategorySchema } from '../lib/schemaValidation.js'
 
 const router = Router()
 
@@ -55,6 +55,10 @@ router.patch('/events/:id/promotion/reject', rejectEventPromotion)
 // Refund requests
 router.get('/refund-requests', listRefundRequests)
 router.patch('/refund-requests/:id/approve', approveRefundRequest)
-router.patch('/refund-requests/:id/reject', rejectRefundRequest)
+router.patch(
+  '/refund-requests/:id/reject',
+  validateFormData(rejectRefundRequestSchema),
+  rejectRefundRequest
+)
 
 export default router

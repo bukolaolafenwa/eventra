@@ -85,7 +85,7 @@ const REQUIRED_FOR_SUBMISSION: { field: keyof IOrganizerProfile; label: string }
 /**
  * Step 3 of the wizard ("Review & submit"). Bank details are deliberately
  * NOT required here — the Figma lets organizers skip that step and add it
- * later from settings; only free events need it to go live, per
+ * later from settings; only paid events need it to go live, per
  * event.controller.ts's paid-event gate.
  */
 export const submitOrganizerProfileForReview = tryCatchWrapper(async (req: Request, res: Response) => {
@@ -218,18 +218,48 @@ export const getOrganizerOverview = tryCatchWrapper(async (req: Request, res: Re
     ]),
     // Held for a few days after the event per the standard payout-delay
     // policy — only orders on events that have already ended are "due".
-    Order.aggregate([
-      { $match: { status: { $in: ['paid', 'partially_refunded'] } } },
-      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
-      { $unwind: '$eventDoc' },
-      {
-        $match: {
-          'eventDoc.organizer': new mongoose.Types.ObjectId(organizerId),
-          'eventDoc.endDate': { $lt: now },
+    Order.aggregate<{ amountDue: number }>([
+  {
+    $match: {
+      status: 'paid',
+    },
+  },
+  {
+    $lookup: {
+      from: 'events',
+      localField: 'event',
+      foreignField: '_id',
+      as: 'eventDoc',
+    },
+  },
+  {
+    $unwind: '$eventDoc',
+  },
+  {
+    $match: {
+      'eventDoc.organizer':
+        new mongoose.Types.ObjectId(
+          organizerId,
+        ),
+      'eventDoc.endDate': {
+        $lt: now,
+      },
+    },
+  },
+  {
+    $group: {
+      _id: null,
+      amountDue: {
+        $sum: {
+          $subtract: [
+            '$subtotal',
+            '$serviceFee',
+          ],
         },
       },
-      { $group: { _id: null, gross: { $sum: '$subtotal' } } },
-    ]),
+    },
+  },
+]),
   ])
 
   const liveEvents = events.filter(e => e.status === 'approved').length
@@ -240,7 +270,8 @@ export const getOrganizerOverview = tryCatchWrapper(async (req: Request, res: Re
   const previousRevenue = previousPeriodAgg[0]?.revenue ?? 0
 
   // PRD Section 8: Eventra retains 5% commission, organizer gets the remainder.
-  const payoutDue = Math.round((payoutDueAgg[0]?.gross ?? 0) * 0.95)
+  const payoutDue =
+  payoutDueAgg[0]?.amountDue ?? 0
 
   return sendTsRestSuccess(res, 200, {
     success: true,
@@ -265,8 +296,10 @@ export const getOrganizerOverview = tryCatchWrapper(async (req: Request, res: Re
 })
 
 /**
- * Lists paid/partially-refunded orders across the organizer's events, with
- * a payoutStatus breakdown — the dashboard's Payouts page.
+ * Lists completed paid orders across the organizer's events, with
+ * a payout-status breakdown for the dashboard's Payouts page.
+ * Partially refunded orders remain excluded until refund
+ * reconciliation is implemented.
  */
 export const listOrganizerPayouts = tryCatchWrapper(async (req: Request, res: Response) => {
   const organizerId = req.session.userId
@@ -278,9 +311,11 @@ export const listOrganizerPayouts = tryCatchWrapper(async (req: Request, res: Re
   const eventById = new Map(organizerEvents.map(e => [e._id.toString(), e]))
 
   const filter = {
-    event: { $in: eventIds },
-    status: { $in: ['paid', 'partially_refunded'] as Array<'paid' | 'partially_refunded'> },
-  }
+  event: {
+    $in: eventIds,
+  },
+  status: 'paid' as const,
+}
 
   const [orders, total] = await Promise.all([
     Order.find(filter).sort({ paidAt: -1 }).skip(skip).limit(limit).lean(),
@@ -300,7 +335,7 @@ export const listOrganizerPayouts = tryCatchWrapper(async (req: Request, res: Re
       eventSlug: event?.slug,
       grossAmount: order.subtotal,
       commission: order.serviceFee,
-      netAmount: Math.round(order.subtotal * 0.95),
+      netAmount: order.subtotal - order.serviceFee,
       paidAt: order.paidAt,
       payoutStatus: isDue ? 'due' : 'pending',
     }

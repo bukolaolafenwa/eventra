@@ -366,6 +366,14 @@ export const refundRequestSchema = z.object({
   reason: z.string().trim().max(500).optional(),
 })
 
+export const rejectRefundRequestSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(3, 'Rejection reason is required')
+    .max(500, 'Rejection reason cannot exceed 500 characters'),
+})
+
 export const checkInSchema = z.object({
   code: z.string().trim().min(1, 'code is required'),
 })

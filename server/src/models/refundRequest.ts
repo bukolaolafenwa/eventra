@@ -10,6 +10,8 @@ export interface IRefundRequest extends Document {
   amount: number
   status: 'pending' | 'approved' | 'rejected' | 'processed'
   rejectionReason?: string
+  rejectedBy?: mongoose.Types.ObjectId
+  rejectedAt?: Date
   paystackRefundReference?: string
   processedAt?: Date
   createdAt: Date
@@ -26,13 +28,20 @@ const RefundRequestSchema = new Schema<IRefundRequest>(
     // here for a guest requester.
     requestedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     reason: { type: String, trim: true },
-    amount: { type: Number, required: true, min: 0 },
+    amount: { type: Number, required: true, min: 1 },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected', 'processed'],
       default: 'pending',
     },
     rejectionReason: { type: String, trim: true },
+    rejectedBy: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+  },
+    rejectedAt: {
+    type: Date,
+  },
     paystackRefundReference: { type: String, trim: true },
     processedAt: { type: Date },
   },
@@ -41,6 +50,19 @@ const RefundRequestSchema = new Schema<IRefundRequest>(
 
 RefundRequestSchema.index({ status: 1, createdAt: 1 })
 RefundRequestSchema.index({ ticket: 1 })
+// prevent two simultaneous pending refund requests for the same ticket.
+RefundRequestSchema.index(
+  {
+    ticket: 1,
+    status: 1,
+  },
+  {
+    unique: true,
+    partialFilterExpression: {
+      status: 'pending',
+    },
+  },
+)
 
 const RefundRequest =
   mongoose.models.RefundRequest || mongoose.model<IRefundRequest>('RefundRequest', RefundRequestSchema, 'refund_requests')

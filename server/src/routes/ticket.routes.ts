@@ -48,6 +48,11 @@ router.get('/qrcode-image/:code', getTicketQrCodeImage)
 // neither just gets a 404, same as trying to access someone else's ticket.
 router.get('/:ticketId/qrcode', getTicketQrCode)
 router.delete('/:ticketId/reservation', cancelReservation)
-router.post('/:ticketId/refund-request', validateFormData(refundRequestSchema), requestRefund)
+router.post(
+  '/:ticketId/refund-request',
+  customRateLimiter(5),
+  validateFormData(refundRequestSchema),
+  requestRefund,
+)
 
 export default router

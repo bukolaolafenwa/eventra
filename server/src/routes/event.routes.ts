@@ -15,7 +15,7 @@ import {
   getEventBySlug,
 } from '../controllers/event.controller.js'
 
-import { checkInTicket, listEventAttendees } from '../controllers/ticket.controller.js'
+
 import { requestPromotion } from '../controllers/promotion.controller.js'
 
 import {
@@ -178,26 +178,6 @@ router.delete(
  * @access  Organizer (owner only — enforced in controller)
  */
 router.get('/:id/dashboard', verifySession, requireRole('organizer'), getEventDashboard)
-
-/**
- * @route   POST /api/v1/events/:eventId/check-in
- * @desc    Check a ticket in at the door (scan/redeem its code)
- * @access  Organizer (owner only — enforced in controller)
- */
-router.post(
-  '/:eventId/check-in',
-  verifySession,
-  requireRole('organizer'),
-  validateFormData(checkInSchema),
-  checkInTicket
-)
-
-/**
- * @route   GET /api/v1/events/:eventId/attendees
- * @desc    List an event's attendees for the organizer's door/attendee list
- * @access  Organizer (owner only — enforced in controller)
- */
-router.get('/:eventId/attendees', verifySession, requireRole('organizer'), listEventAttendees)
 
 /**
  * @route   POST /api/v1/events/:id/promote

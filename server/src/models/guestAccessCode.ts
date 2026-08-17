@@ -1,53 +1,77 @@
-import mongoose, { Document, Schema } from 'mongoose'
+import mongoose, {
+  Document,
+  Schema,
+} from 'mongoose'
 
 /**
  * Backs the "track my ticket by email" flow for people who checked out or
- * RSVP'd as a guest (no account) and want to view/manage their ticket
- * later — whether or not the confirmation email actually arrived. A code
- * sent to `email` proves inbox ownership; on success the controller sets
- * `req.session.guestEmail`, which is then trusted the same way
- * `req.session.userId` is for a real account (see lib/attendee.ts and the
- * ownership checks in cancelReservation/requestRefund).
+ * RSVP'd as a guest and want to view or manage their tickets later.
  *
- * Deliberately its own tiny collection rather than reusing the Memcached
- * cache in lib/cache.ts — that cache is explicitly best-effort (silently
- * returns null on any error), which is fine for response caching but not
- * for something a real flow depends on to function at all.
+ * A code sent to the attendee's email proves inbox ownership. The OTP is
+ * stored as a bcrypt hash, expires after fifteen minutes and permits only
+ * a limited number of failed verification attempts.
+ *
+ * After successful verification, the controller stores the normalized
+ * email in req.session.guestEmail. Ticket ownership checks then treat that
+ * verified email similarly to an authenticated attendee identity.
  */
-export interface IGuestAccessCode extends Document {
+export interface IGuestAccessCode
+  extends Document {
   email: string
-  otp: string
+  otpHash: string
   otpExpiry: Date
+  attempts: number
   createdAt: Date
 }
 
-const GuestAccessCodeSchema = new Schema<IGuestAccessCode>({
-  email: {
-    type: String,
-    required: true,
-    trim: true,
-    lowercase: true,
-  },
-  otp: {
-    type: String,
-    required: true,
-  },
-  otpExpiry: {
-    type: Date,
-    required: true,
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
+const GuestAccessCodeSchema =
+  new Schema<IGuestAccessCode>({
+    email: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
+    },
+    otpHash: {
+      type: String,
+      required: true,
+    },
+    attempts: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5,
+    },
+    otpExpiry: {
+      type: Date,
+      required: true,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  })
+
+GuestAccessCodeSchema.index({
+  email: 1,
 })
 
-GuestAccessCodeSchema.index({ email: 1 })
-// TTL index — Mongo auto-deletes a code once its expiry passes, so stale
-// codes never pile up and can't be reused after the fact.
-GuestAccessCodeSchema.index({ otpExpiry: 1 }, { expireAfterSeconds: 0 })
+// MongoDB automatically removes expired guest access codes.
+GuestAccessCodeSchema.index(
+  {
+    otpExpiry: 1,
+  },
+  {
+    expireAfterSeconds: 0,
+  },
+)
 
 const GuestAccessCode =
-  mongoose.models.GuestAccessCode || mongoose.model<IGuestAccessCode>('GuestAccessCode', GuestAccessCodeSchema, 'guestAccessCodes')
+  mongoose.models.GuestAccessCode ||
+  mongoose.model<IGuestAccessCode>(
+    'GuestAccessCode',
+    GuestAccessCodeSchema,
+    'guestAccessCodes',
+  )
 
 export default GuestAccessCode

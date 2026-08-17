@@ -18,6 +18,9 @@ import checkoutRoutes from './routes/checkout.routes.js'
 import paymentRoutes from './routes/payment.routes.js'
 import { startOrderExpiryJob } from "./jobs/orderExpiry.js";
 import reservationRoutes from './routes/reservation.routes.js'
+import checkInRoutes from './routes/checkin.routes.js'
+import attendeeRoutes from './routes/attendee.routes.js'
+import ticketHistoryRoutes from './routes/ticket-history.routes.js'
 import ticketRoutes from './routes/ticket.routes.js'
 import promotionRoutes from './routes/promotion.routes.js'
 import cronRoutes from './routes/cron.routes.js'
@@ -185,6 +188,7 @@ app.get('/', (req: Request, res: Response) => {
 // Routes
 app.use('/api/v1/auth', authRoutes)
 app.use('/api/v1/payments', paymentRoutes)
+app.use('/api/v1/tickets', ticketHistoryRoutes)
 app.use('/api/v1/tickets', ticketRoutes)
 app.use('/api/v1/promotions', promotionRoutes)
 app.use('/api', cronRoutes)
@@ -193,6 +197,8 @@ app.use('/api/v1/uploads', uploadRoutes)
 app.use('/api/v1/events', checkoutRoutes)
 app.use('/api/v1/events', tickettypeRoutes)
 app.use('/api/v1/events', reservationRoutes)
+app.use('/api/v1/events', checkInRoutes)
+app.use('/api/v1/events', attendeeRoutes)
 app.use('/api/v1/events', eventRoutes)
 
 

@@ -5,6 +5,7 @@ import { env } from '../config/keys.js'
 import { ErrorResponse } from '../middlewares/error.middleware.js'
 import Event from '../models/event.js'
 import Order, {
+  calculateOrderTotals,
   IOrder,
   IOrderCustomer,
   IOrderItem,
@@ -43,7 +44,7 @@ interface NormalizedCheckoutItem {
 }
 
 export class CheckoutService {
-  private readonly serviceFeePercentage = 5
+  // private readonly serviceFeePercentage = 5
 
   private readonly reservationMinutes = 15
 
@@ -91,12 +92,6 @@ export class CheckoutService {
     const suffix = randomBytes(8).toString('hex')
 
     return `eventra-${Date.now()}-${suffix}`
-  }
-
-  private calculateServiceFee(subtotal: number): number {
-    return Math.round(
-      subtotal * (this.serviceFeePercentage / 100),
-    )
   }
 
   private validateSalesPeriod(
@@ -353,9 +348,11 @@ export class CheckoutService {
           subtotal += itemSubtotal
         }
 
-        const serviceFee =
-          this.calculateServiceFee(subtotal)
-        const totalAmount = subtotal + serviceFee
+        const totals =
+        calculateOrderTotals(orderItems)
+
+        const serviceFee = totals.platformFee
+        const totalAmount = totals.total
         const paystackReference =
           this.generatePaystackReference()
 
