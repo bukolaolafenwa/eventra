@@ -6,8 +6,12 @@ import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import { buildPaginationMeta, escapeRegExp, getPagination, sanitizeUser } from '../lib/utils.js'
 import { invalidateUserSessions } from '../lib/sessionStore.js'
 import Event from '../models/event.js'
+import Order from '../models/order.js'
+import RefundRequest from '../models/refundRequest.js'
+import Ticket from '../models/ticket.js'
 import User from '../models/user.js'
 import { EmailService } from '../services/email.service.js'
+import { paystackService } from '../services/paystack.service.js'
 
 export const listUsers = tryCatchWrapper(async (req: Request, res: Response) => {
   const { page, limit, skip } = getPagination(req.query)
@@ -73,16 +77,17 @@ export const unsuspendUser = tryCatchWrapper(async (req: Request, res: Response)
   })
 })
 
-// NOTE: grossTicketSales, commissionRevenue, and pendingRefundRequests were removed —
-// they depended on Order.aggregate() and RefundRequest.countDocuments(), both owned by
-// Person B (Tickets, Checkout & Payments). Once Person B exposes those numbers
-// (e.g. a stats helper in payment.service.ts, or their own endpoint), wire them back in here.
 export const getPlatformStats = tryCatchWrapper(async (req: Request, res: Response) => {
-  const [promotedEvents, activeEvents, totalUsers, totalOrganizers] = await Promise.all([
+  const [salesAgg, promotedEvents, activeEvents, totalUsers, totalOrganizers, pendingRefunds] = await Promise.all([
+    Order.aggregate([
+      { $match: { status: { $in: ['paid', 'partially_refunded'] } } },
+      { $group: { _id: null, grossSales: { $sum: '$subtotal' }, commissionRevenue: { $sum: '$serviceFee' } } },
+    ]),
     Event.find({ 'promotion.status': 'approved' }).select('promotion.package').lean(),
-    Event.countDocuments({ status: { $in: ['approved', 'postponed'] } }),
+    Event.countDocuments({ status: { $in: ['approved', 'postponed'] as Array<'approved' | 'postponed'> } }),
     User.countDocuments({ role: 'attendee' }),
     User.countDocuments({ role: 'organizer' }),
+    RefundRequest.countDocuments({ status: 'pending' }),
   ])
 
   const promotionRevenue = promotedEvents.reduce((sum, event) => {
@@ -94,12 +99,13 @@ export const getPlatformStats = tryCatchWrapper(async (req: Request, res: Respon
     success: true,
     message: 'Platform stats fetched',
     body: {
+      grossTicketSales: salesAgg[0]?.grossSales ?? 0,
+      commissionRevenue: salesAgg[0]?.commissionRevenue ?? 0,
       promotionRevenue,
       activeEvents,
       totalAttendees: totalUsers,
       totalOrganizers,
-      // TODO: merge in grossTicketSales, commissionRevenue, pendingRefundRequests
-      // from Person B once that data is available.
+      pendingRefundRequests: pendingRefunds,
     },
   })
 })
@@ -294,6 +300,150 @@ export const rejectEventPromotion = tryCatchWrapper(async (req: Request, res: Re
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Promotion rejected',
+    body: event.toObject(),
+  })
+})
+
+export const listRefundRequests = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { page, limit, skip } = getPagination(req.query)
+  const status = typeof req.query.status === 'string' ? req.query.status : 'pending'
+  const filter = { status }
+
+  const [refundRequests, total] = await Promise.all([
+    RefundRequest.find(filter)
+      .populate('event', 'title slug')
+      .populate('requestedBy', 'fullname email')
+      .sort({ createdAt: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    RefundRequest.countDocuments(filter),
+  ])
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Refund requests fetched',
+    body: { refundRequests, meta: buildPaginationMeta(page, limit, total) },
+  })
+})
+
+//  * refund. Paystack processing is temporarily unavailable until safe
+//  * reconciliation and retry handling are implemented.
+export const approveRefundRequest = tryCatchWrapper(
+  async (_req: Request, res: Response) => {
+    return sendTsRestError(
+      res,
+      501,
+      'Refund processing is not available yet',
+    )
+  },
+)
+
+/**
+ * Atomically rejects a pending refund request and records the admin,
+ * reason and time of rejection. The pending-status condition ensures
+ * that simultaneous review attempts cannot update the same request twice.
+ */
+export const rejectRefundRequest =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const { id } = req.params
+      const { reason } = req.body as {
+        reason: string
+      }
+
+      const refundRequest =
+        await RefundRequest.findOneAndUpdate(
+          {
+            _id: id,
+            status: 'pending',
+          },
+          {
+            $set: {
+              status: 'rejected',
+              rejectionReason: reason,
+              rejectedBy:
+                req.session.userId,
+              rejectedAt: new Date(),
+            },
+          },
+          {
+            new: true,
+            runValidators: true,
+          },
+        )
+
+      if (!refundRequest) {
+        return sendTsRestError(
+          res,
+          404,
+          'No pending refund request found with this id',
+        )
+      }
+
+      return sendTsRestSuccess(
+        res,
+        200,
+        {
+          success: true,
+          message:
+            'Refund request rejected',
+          body:
+            refundRequest.toObject(),
+        },
+      )
+    },
+  )
+
+/**
+ * Model already supports status: 'suspended' + suspendedReason (see
+ * models/event.ts) — this is the admin handler that was flagged as missing
+ * in lib/schemaValidation.ts's suspendEventSchema comment. Deliberately
+ * broader than cancelEvent: suspension is a moderation action an admin can
+ * apply to a live event (fraud, a complaint, a policy issue) without it
+ * being the organizer's own cancellation — tickets/reservations are left
+ * untouched here, since a suspension is a "pause for review", not a
+ * cancellation with refunds. If the outcome ends up being "this event is
+ * not happening," the admin (or organizer) still uses cancelEvent for that.
+ */
+export const suspendEvent = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const { reason } = req.body as { reason: string }
+
+  const event = await Event.findOne({ _id: id, status: { $in: ['approved', 'postponed'] as Array<'approved' | 'postponed'> } })
+  if (!event) {
+    return sendTsRestError(res, 404, 'No live event found with this id')
+  }
+
+  event.status = 'suspended'
+  event.suspendedReason = reason
+  await event.save()
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Event suspended',
+    body: event.toObject(),
+  })
+})
+
+export const unsuspendEvent = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { id } = req.params
+
+  const event = await Event.findOne({ _id: id, status: 'suspended' })
+  if (!event) {
+    return sendTsRestError(res, 404, 'No suspended event found with this id')
+  }
+
+  event.status = 'approved'
+  event.suspendedReason = undefined
+  await event.save()
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Event reinstated',
     body: event.toObject(),
   })
 })

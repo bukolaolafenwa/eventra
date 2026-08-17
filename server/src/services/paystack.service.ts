@@ -230,6 +230,111 @@ export class PaystackService {
     }
   }
 
+  async refundTransaction(input: {
+    transactionReference: string
+    amountNaira?: number
+    reason?: string
+  }): Promise<{ reference: string; status: string }> {
+    const transactionReference = input.transactionReference.trim()
+
+    if (!transactionReference) {
+      throw new ErrorResponse('Transaction reference is required', 400)
+    }
+
+    try {
+      const response = await this.client.post<{
+        status: boolean
+        message: string
+        data: { transaction_reference?: string; status?: string; refund_reference?: string }
+      }>('/refund', {
+        transaction: transactionReference,
+        ...(input.amountNaira !== undefined
+          ? { amount: this.convertNairaToKobo(input.amountNaira) }
+          : {}),
+        ...(input.reason ? { customer_note: input.reason, merchant_note: input.reason } : {}),
+      })
+
+      if (!response.data.status) {
+        throw new ErrorResponse(response.data.message || 'Paystack could not process the refund', 502)
+      }
+
+      return {
+        reference: response.data.data.refund_reference ?? transactionReference,
+        status: response.data.data.status ?? 'pending',
+      }
+    } catch (error: unknown) {
+      if (error instanceof ErrorResponse) {
+        throw error
+      }
+
+      throw new ErrorResponse(`Could not process refund: ${this.getPaystackErrorMessage(error)}`, 502)
+    }
+  }
+
+  private banksCache?: { fetchedAt: number; banks: { name: string; code: string }[] }
+  private readonly banksCacheTtlMs = 24 * 60 * 60 * 1000 // the bank list is effectively static
+
+  async listBanks(): Promise<{ name: string; code: string }[]> {
+    if (this.banksCache && Date.now() - this.banksCache.fetchedAt < this.banksCacheTtlMs) {
+      return this.banksCache.banks
+    }
+
+    try {
+      const response = await this.client.get<{
+        status: boolean
+        message: string
+        data: { name: string; code: string; active: boolean; country: string; currency: string }[]
+      }>('/bank', { params: { country: 'nigeria', currency: 'NGN' } })
+
+      if (!response.data.status) {
+        throw new ErrorResponse(response.data.message || 'Could not fetch bank list', 502)
+      }
+
+      const banks = response.data.data
+        .filter(bank => bank.active)
+        .map(bank => ({ name: bank.name, code: bank.code }))
+
+      this.banksCache = { fetchedAt: Date.now(), banks }
+      return banks
+    } catch (error: unknown) {
+      if (error instanceof ErrorResponse) {
+        throw error
+      }
+
+      throw new ErrorResponse(`Could not fetch bank list: ${this.getPaystackErrorMessage(error)}`, 502)
+    }
+  }
+
+  async resolveAccount(input: {
+    accountNumber: string
+    bankCode: string
+  }): Promise<{ accountName: string; accountNumber: string }> {
+    try {
+      const response = await this.client.get<{
+        status: boolean
+        message: string
+        data: { account_number: string; account_name: string }
+      }>('/bank/resolve', {
+        params: { account_number: input.accountNumber, bank_code: input.bankCode },
+      })
+
+      if (!response.data.status) {
+        throw new ErrorResponse(response.data.message || 'Could not resolve this account', 400)
+      }
+
+      return {
+        accountName: response.data.data.account_name,
+        accountNumber: response.data.data.account_number,
+      }
+    } catch (error: unknown) {
+      if (error instanceof ErrorResponse) {
+        throw error
+      }
+
+      throw new ErrorResponse(`Could not resolve account: ${this.getPaystackErrorMessage(error)}`, 502)
+    }
+  }
+
   validateWebhookSignature(
     payload: unknown,
     signature: string | undefined,

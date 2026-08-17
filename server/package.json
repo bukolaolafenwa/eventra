@@ -4,7 +4,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
     "dev": "tsx watch --inspect src/index.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
     "backfill:ticket-ids": "tsx src/scripts/backfill-ticket-ids.ts"
@@ -46,6 +46,7 @@
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.10"
   }
 }

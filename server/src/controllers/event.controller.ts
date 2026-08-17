@@ -12,7 +12,11 @@ import {
 } from '../lib/utils.js'
 import Category from '../models/category.js'
 import Event from '../models/event.js'
+import Ticket from '../models/ticket.js'
+import TicketType from '../models/tickettype.js'
 import User from '../models/user.js'
+import Order from '../models/order.js'
+
 
 const EDITABLE_STATUSES = ['draft', 'rejected']
 
@@ -101,9 +105,6 @@ export const updateEventLineup = tryCatchWrapper(async (req: Request, res: Respo
   })
 })
 
-// TODO: restore the ticket-type checks (needs the TicketType model) once
-// that import is available — a paid event should have at least one active
-// ticket type before it can go to review.
 export const submitEventForApproval = tryCatchWrapper(async (req: Request, res: Response) => {
   const { id } = req.params
   const event = await Event.findOne({ _id: id, organizer: req.session.userId })
@@ -126,6 +127,15 @@ export const submitEventForApproval = tryCatchWrapper(async (req: Request, res: 
   // bank details are only required for paid events to go live, not free ones.
   if (event.type === 'paid' && !organizer.organizerProfile.isPayoutReady) {
     return sendTsRestError(res, 400, 'Add your bank account details before submitting a paid event')
+  }
+  // A paid event needs something to actually sell before it can go live —
+  // mirrors createTicketType in ticketType.controller.ts, the only place
+  // TicketType docs for this event get created.
+  if (event.type === 'paid') {
+    const ticketTypeCount = await TicketType.countDocuments({ event: event._id })
+    if (ticketTypeCount === 0) {
+      return sendTsRestError(res, 400, 'Add at least one ticket type before submitting a paid event')
+    }
   }
 
   // A draft can sit around indefinitely, or a rejected one gets resubmitted
@@ -172,8 +182,6 @@ export const withdrawEvent = tryCatchWrapper(async (req: Request, res: Response)
   })
 })
 
-// TODO: re-add `await TicketType.deleteMany({ event: event._id })` once
-// TicketType is imported, so orphaned ticket types don't get left behind.
 export const deleteEvent = tryCatchWrapper(async (req: Request, res: Response) => {
   const { id } = req.params
   const event = await Event.findOne({ _id: id, organizer: req.session.userId })
@@ -185,6 +193,7 @@ export const deleteEvent = tryCatchWrapper(async (req: Request, res: Response) =
     return sendTsRestError(res, 400, 'Only draft or rejected events with no reservations/sales can be deleted')
   }
 
+  await TicketType.deleteMany({ event: event._id })
   await event.deleteOne()
 
   return sendTsRestSuccess<undefined>(res, 200, {
@@ -281,14 +290,48 @@ export const listPublicEvents = tryCatchWrapper(async (req: Request, res: Respon
   })
 })
 
-// TODO: restore the TicketType breakdown (name/price/quantity/quantitySold/
-// purchaseLimitPerPerson/isActive + quantityRemaining) once TicketType is imported.
 export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Response) => {
   const { id } = req.params
   const event = await Event.findOne({ _id: id, organizer: req.session.userId }).lean()
   if (!event) {
     return sendTsRestError(res, 404, 'Event not found')
   }
+
+  const [ticketTypes, checkedInCount, recentAttendees, payoutSummary] = await Promise.all([
+    event.type === 'paid'
+      ? TicketType.find({ event: event._id })
+          .select('name price quantity quantitySold quantityReserved purchaseLimitPerPerson isActive')
+          .lean()
+      : Promise.resolve([]),
+    Ticket.countDocuments({ event: event._id, status: 'used' }),
+    Ticket.find({ event: event._id })
+      .select('attendeeName code status ticketTypeName')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean(),
+
+      Order.aggregate<{ amountDue: number }>([
+  {
+    $match: {
+      event: event._id,
+      status: 'paid',
+    },
+  },
+  {
+    $group: {
+      _id: null,
+      amountDue: {
+        $sum: {
+          $subtract: [
+            '$subtotal',
+            '$serviceFee',
+          ],
+        },
+      },
+    },
+  },
+]),
+  ])
 
   const body = {
     event: {
@@ -304,13 +347,24 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
     capacityRemaining: event.capacity ? Math.max(event.capacity - event.reservationsCount, 0) : null,
     ticketsSoldCount: event.ticketsSoldCount,
     revenueTotal: event.revenueTotal,
+    checkedInCount,
+    recentAttendees: recentAttendees.map(t => ({
+      _id: t._id,
+      attendeeName: t.attendeeName,
+      code: t.code,
+      status: t.status,
+      ticketTypeName: t.ticketTypeName,
+    })),
+    ticketTypes: ticketTypes.map(tt => ({
+      ...tt,
+      quantityRemaining: Math.max(tt.quantity - tt.quantitySold - tt.quantityReserved, 0),
+    })),
     payout: {
-      // PRD Section 8: Eventra retains 5% commission, organizer gets the
-      // remainder. revenueTotal is gross ticket sales — this is what's
-      // actually owed to the organizer, held until a few days after the
-      // event (see PAYOUT_DELAY_DAYS in ticket.service.ts).
-      amountDue: Math.round(event.revenueTotal * 0.95),
-    },
+  // Eventra's stored fee is deducted from each completed paid order.
+  // This avoids recalculating and potentially rounding the fee differently.
+  amountDue:
+    payoutSummary[0]?.amountDue ?? 0,
+},
   }
 
   return sendTsRestSuccess(res, 200, {
@@ -321,11 +375,9 @@ export const getEventDashboard = tryCatchWrapper(async (req: Request, res: Respo
 })
 
 /**
- * Cancels a live event.
- * TODO: restore the paid-event refund flow (Order, PaystackService, Ticket)
- * once those are imported — one Paystack refund per paid order, then mark
- * orders 'refunded' and invalidate their tickets. Free reservations should
- * still get their tickets invalidated too.
+ * Cancels a live free event and invalidates its active reservations.
+ * Paid-event cancellation is temporarily unavailable until refund
+ * processing and reconciliation are safely implemented.
  */
 export const cancelEvent = tryCatchWrapper(async (req: Request, res: Response) => {
   const { id } = req.params
@@ -338,10 +390,31 @@ export const cancelEvent = tryCatchWrapper(async (req: Request, res: Response) =
   if (event.status !== 'approved' && event.status !== 'postponed') {
     return sendTsRestError(res, 400, 'Only a live (approved or postponed) event can be cancelled')
   }
+    if (event.type === 'paid') {
+    return sendTsRestError(
+      res,
+      501,
+      'Paid-event cancellation is not available until refund processing and reconciliation are fully implemented',
+    )
+  }
+  const cancelledAt = new Date()
 
   event.status = 'cancelled'
-  event.cancelledAt = new Date()
+  event.cancelledAt = cancelledAt
   await event.save()
+
+  await Ticket.updateMany(
+    {
+      event: event._id,
+      status: 'active',
+    },
+    {
+      $set: {
+        status: 'cancelled',
+        cancelledAt,
+      },
+    },
+  )
 
   return sendTsRestSuccess(res, 200, {
     success: true,
@@ -404,11 +477,10 @@ export const postponeEvent = tryCatchWrapper(async (req: Request, res: Response)
   })
 })
 
-// TODO: restore the `ticketTypes` array (needs TicketType) once it's imported.
 export const getEventBySlug = tryCatchWrapper(async (req: Request, res: Response) => {
   const { slug } = req.params
 
-  const event = await Event.findOne({ slug, status: { $in: ['approved', 'postponed'] } })
+  const event = await Event.findOne({ slug, status: { $in: ['approved', 'postponed'] as Array<'approved' | 'postponed'> } })
     .populate('category', 'name slug')
     .populate('organizer', 'fullname organizerProfile.businessName')
     .lean()
@@ -417,9 +489,12 @@ export const getEventBySlug = tryCatchWrapper(async (req: Request, res: Response
     return sendTsRestError(res, 404, 'Event not found')
   }
 
+  const ticketTypes =
+    event.type === 'paid' ? await TicketType.find({ event: event._id, isActive: true }).lean() : []
+
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Event fetched',
-    body: event,
+    body: { ...event, ticketTypes },
   })
 })

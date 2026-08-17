@@ -53,6 +53,46 @@ export interface IOrder extends Document {
   updatedAt: Date;
 }
 
+export interface OrderTotalInput {
+  ticketType?: mongoose.Types.ObjectId
+  quantity: number
+  unitPrice: number
+}
+
+export interface OrderTotals {
+  subtotal: number
+  platformFee: number
+  organizerEarnings: number
+  total: number
+}
+
+/**
+ * Calculates an order using Eventra's organizer-funded commission model.
+ * The attendee pays only the advertised ticket price, while Eventra's
+ * 5% commission is deducted from the organizer's earnings.
+ */
+export const calculateOrderTotals = (
+  items: OrderTotalInput[],
+): OrderTotals => {
+  const subtotal = items.reduce(
+    (total, item) =>
+      total + item.unitPrice * item.quantity,
+    0,
+  )
+
+  const platformFee = Math.round(
+    subtotal * 0.05,
+  )
+
+  return {
+    subtotal,
+    platformFee,
+    organizerEarnings:
+      subtotal - platformFee,
+    total: subtotal,
+  }
+}
+
 const OrderItemSchema = new Schema<IOrderItem>(
   {
     ticketType: {

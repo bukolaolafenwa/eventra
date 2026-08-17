@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import { sanitizeUser } from '../lib/utils.js'
+import Order from '../models/order.js'
 import User from '../models/user.js'
 import { CloudinaryService } from '../services/cloudinary.service.js'
 
@@ -126,20 +127,15 @@ export const listSavedEvents = tryCatchWrapper(async (req: Request, res: Respons
   })
 })
 
-// TODO(orders): previously queried Order.find({ buyer: ... }) directly, but
-// the Order model is owned by Person B (Tickets, Checkout & Payments). Swap
-// this stub for either a re-added Order import once that model is stable,
-// or a call into a service Person B exposes.
 export const listOrderHistory = tryCatchWrapper(async (req: Request, res: Response) => {
-  return sendTsRestError(res, 501, 'Order history is not wired up yet (pending payments integration)')
-  // const orders = await Order.find({ buyer: req.session.userId })
-  //   .populate('event', 'title slug startDate coverImage')
-  //   .sort({ createdAt: -1 })
-  //   .lean()
-  //
-  // return sendTsRestSuccess(res, 200, {
-  //   success: true,
-  //   message: 'Order history fetched',
-  //   body: orders,
-  // })
+  const orders = await Order.find({ buyer: req.session.userId })
+    .populate('event', 'title slug startDate coverImage')
+    .sort({ createdAt: -1 })
+    .lean()
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Order history fetched',
+    body: orders,
+  })
 })
