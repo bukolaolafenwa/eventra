@@ -25,11 +25,73 @@ export const slugify = (value: string): string => {
 }
 
 /**
- * Strip sensitive/internal fields off a Mongoose lean user doc before sending to the client.
+ * Removes payout credentials and masks the bank account before an
+ * organizer profile is returned to any frontend.
  */
-export const sanitizeUser = (user: Record<string, any>): Record<string, any> => {
-  const { password, emailVerificationOTP, emailVerificationOTPExpiry, __v, ...safe } = user
-  return safe
+export const sanitizeOrganizerProfile = (
+  profile:
+    | Record<string, any>
+    | null
+    | undefined,
+): Record<string, any> | null => {
+  if (!profile) {
+    return null
+  }
+
+  const {
+    accountNumber,
+    paystackRecipientCode,
+    ...safeProfile
+  } = profile
+
+  return {
+    ...safeProfile,
+    ...(typeof accountNumber ===
+      'string' &&
+    accountNumber.length >= 4
+      ? {
+          accountNumberLast4:
+            accountNumber.slice(-4),
+        }
+      : {}),
+  }
+}
+
+/**
+ * Strips sensitive and internal fields from a Mongoose user document.
+ * Organizer payout credentials are sanitized through the same response
+ * boundary so controllers cannot accidentally expose them.
+ */
+export const sanitizeUser = (
+  user: Record<string, any>,
+): Record<string, any> => {
+  const {
+    password,
+    emailVerificationOTP,
+    emailVerificationOTPExpiry,
+    emailVerificationAttempts,
+    passwordResetOTP,
+    passwordResetOTPExpiry,
+    passwordResetAttempts,
+    failedLoginAttempts,
+    lockUntil,
+    avatarPublicId,
+    organizerProfile,
+    __v,
+    ...safe
+  } = user
+
+  return {
+    ...safe,
+    ...(organizerProfile !== undefined
+      ? {
+          organizerProfile:
+            sanitizeOrganizerProfile(
+              organizerProfile,
+            ),
+        }
+      : {}),
+  }
 }
 
 /**
