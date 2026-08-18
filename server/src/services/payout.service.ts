@@ -12,7 +12,8 @@ import Payout, {
   IPayout,
 } from '../models/payout.js'
 import User from '../models/user.js'
-import { paystackService } from './paystack.service.js'
+import { PaystackTransferRejectedError, paystackService, } from './paystack.service.js'
+
 
 export interface InitiatedPayoutResult {
   payoutId: string
@@ -377,11 +378,19 @@ export class PayoutService {
           },
         },
       )
-    } catch (error: unknown) {
+      } catch (error: unknown) {
+      const wasExplicitlyRejected =
+        error instanceof
+        PaystackTransferRejectedError
+
       /*
-       * A timeout is ambiguous: Paystack may have accepted the transfer.
-       * Keep the payout pending and preserve its reference for verification
-       * instead of marking it failed or creating another transfer.
+       * An explicit Paystack rejection is conclusive and can safely mark
+       * the payout failed. A timeout or network failure is ambiguous:
+       * Paystack may have accepted the transfer, so preserve the reference
+       * and leave that payout pending for later verification.
+       *
+       * The pending-status filter also prevents this catch block from
+       * overwriting a final status delivered by a fast webhook.
        */
       await Payout.updateOne(
         {
@@ -390,12 +399,23 @@ export class PayoutService {
         },
         {
           $set: {
+            status:
+              wasExplicitlyRejected
+                ? 'failed'
+                : 'pending',
             providerStatus:
-              'initiation_unknown',
+              wasExplicitlyRejected
+                ? 'initiation_rejected'
+                : 'initiation_unknown',
             failureReason:
               error instanceof Error
                 ? error.message
-                : 'Transfer initiation outcome is unknown',
+                : wasExplicitlyRejected
+                  ? 'Paystack rejected the transfer'
+                  : 'Transfer initiation outcome is unknown',
+            ...(wasExplicitlyRejected
+              ? { failedAt: now }
+              : {}),
           },
         },
       )

@@ -86,6 +86,16 @@ interface PaystackVerifyResponse {
   }
 }
 
+/**
+ * Indicates that Paystack explicitly rejected a transfer request.
+ *
+ * Unlike a timeout or network failure, this is a conclusive response:
+ * Paystack did not accept the transfer, so the payout can safely move to
+ * failed instead of remaining pending for reconciliation.
+ */
+export class PaystackTransferRejectedError
+  extends ErrorResponse {}
+
 export class PaystackService {
   private clientInstance?: AxiosInstance
 
@@ -504,8 +514,8 @@ export class PaystackService {
         currency: 'NGN',
       })
 
-      if (!response.data.status) {
-        throw new ErrorResponse(
+            if (!response.data.status) {
+        throw new PaystackTransferRejectedError(
           response.data.message ||
             'Paystack could not initiate the transfer',
           502,
@@ -525,13 +535,39 @@ export class PaystackService {
         transferredAt:
           transfer.transferred_at ?? undefined,
       }
-    } catch (error: unknown) {
+        } catch (error: unknown) {
+      if (
+        error instanceof
+        PaystackTransferRejectedError
+      ) {
+        throw error
+      }
+
       if (error instanceof ErrorResponse) {
         throw error
       }
 
+      /*
+       * An HTTP response means Paystack conclusively rejected the request.
+       * A request without any response may have timed out after Paystack
+       * accepted it, so that outcome must remain ambiguous.
+       */
+      if (
+        axios.isAxiosError(error) &&
+        error.response
+      ) {
+        throw new PaystackTransferRejectedError(
+          `Could not initiate transfer: ${this.getPaystackErrorMessage(
+            error,
+          )}`,
+          502,
+        )
+      }
+
       throw new ErrorResponse(
-        `Could not initiate transfer: ${this.getPaystackErrorMessage(error)}`,
+        `Could not initiate transfer: ${this.getPaystackErrorMessage(
+          error,
+        )}`,
         502,
       )
     }

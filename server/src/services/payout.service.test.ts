@@ -16,7 +16,7 @@ import Event from '../models/event.js'
 import Order from '../models/order.js'
 import Payout from '../models/payout.js'
 import User from '../models/user.js'
-import { paystackService } from './paystack.service.js'
+import { PaystackTransferRejectedError, paystackService } from './paystack.service.js'
 import {
   PayoutService,
 } from './payout.service.js'
@@ -122,7 +122,7 @@ const createPaidOrder = async (
     ),
   })
 
-  const createProcessingPayout =
+const createProcessingPayout =
   async () => {
     initiateTransferMock
       .mockResolvedValueOnce({
@@ -628,6 +628,111 @@ describe(
 
       expect(payout!.status).toBe(
         'processing',
+      )
+    })
+
+        it('marks an explicit Paystack initiation rejection as failed', async () => {
+      initiateTransferMock
+        .mockRejectedValueOnce(
+          new PaystackTransferRejectedError(
+            'Third-party payouts are unavailable for starter businesses',
+            502,
+          ),
+        )
+
+      const organizer =
+        await createOrganizer()
+
+      const event =
+        await createPaidEvent(
+          organizer._id,
+          new Date(
+            '2026-08-14T12:00:00.000Z',
+          ),
+        )
+
+      await createPaidOrder(event._id)
+
+      const service =
+        new PayoutService()
+
+      await expect(
+        service.initiateEventPayout(
+          event._id.toString(),
+          new mongoose.Types.ObjectId()
+            .toString(),
+          NOW,
+        ),
+      ).rejects.toThrow(
+        /starter businesses/i,
+      )
+
+      const payout =
+        await Payout.findOne({
+          event: event._id,
+        }).lean()
+
+      expect(payout).not.toBeNull()
+      expect(payout!.status).toBe(
+        'failed',
+      )
+      expect(
+        payout!.providerStatus,
+      ).toBe('initiation_rejected')
+      expect(payout!.failedAt).toEqual(
+        NOW,
+      )
+    })
+
+    it('keeps an ambiguous transfer timeout pending for reconciliation', async () => {
+      initiateTransferMock
+        .mockRejectedValueOnce(
+          new Error(
+            'Connection timed out before a response was received',
+          ),
+        )
+
+      const organizer =
+        await createOrganizer()
+
+      const event =
+        await createPaidEvent(
+          organizer._id,
+          new Date(
+            '2026-08-14T12:00:00.000Z',
+          ),
+        )
+
+      await createPaidOrder(event._id)
+
+      const service =
+        new PayoutService()
+
+      await expect(
+        service.initiateEventPayout(
+          event._id.toString(),
+          new mongoose.Types.ObjectId()
+            .toString(),
+          NOW,
+        ),
+      ).rejects.toThrow(
+        /timed out/i,
+      )
+
+      const payout =
+        await Payout.findOne({
+          event: event._id,
+        }).lean()
+
+      expect(payout).not.toBeNull()
+      expect(payout!.status).toBe(
+        'pending',
+      )
+      expect(
+        payout!.providerStatus,
+      ).toBe('initiation_unknown')
+      expect(payout!.failedAt).toBe(
+        undefined,
       )
     })
   },
