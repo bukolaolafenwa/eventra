@@ -2,8 +2,16 @@ import { Request, Response } from 'express'
 import mongoose from 'mongoose'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
-import { buildPaginationMeta, getPagination, sanitizeUser } from '../lib/utils.js'
-import User, { IOrganizerProfile } from '../models/user.js'
+import {
+  buildPaginationMeta,
+  getPagination,
+  sanitizeOrganizerProfile,
+  sanitizeUser,
+} from '../lib/utils.js'
+import User, {
+  IOrganizerNotificationPreferences,
+  IOrganizerProfile,
+} from '../models/user.js'
 import Event from '../models/event.js'
 import Order from '../models/order.js'
 import Ticket from '../models/ticket.js'
@@ -268,9 +276,188 @@ export const getOrganizerProfile = tryCatchWrapper(async (req: Request, res: Res
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Organizer profile fetched',
-    body: user.organizerProfile ?? null,
+    body: sanitizeOrganizerProfile(
+    user.organizerProfile,
+),
   })
 })
+
+/**
+ * Returns the complete organizer Settings-page state without exposing the
+ * full bank account number or Paystack recipient code.
+ */
+export const getOrganizerSettings =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const user =
+        await User.findById(
+          req.session.userId,
+        ).lean()
+
+      if (!user) {
+        return sendTsRestError(
+          res,
+          404,
+          'User not found',
+        )
+      }
+
+      const profile =
+        user.organizerProfile
+
+      const notifications = {
+        newTicketSalesAndRsvps:
+          user
+            .organizerNotificationPreferences
+            ?.newTicketSalesAndRsvps ??
+          false,
+        dailySalesSummary:
+          user
+            .organizerNotificationPreferences
+            ?.dailySalesSummary ??
+          false,
+        payoutConfirmations:
+          user
+            .organizerNotificationPreferences
+            ?.payoutConfirmations ??
+          false,
+        eventApprovals:
+          user
+            .organizerNotificationPreferences
+            ?.eventApprovals ??
+          false,
+      }
+
+      return sendTsRestSuccess(
+        res,
+        200,
+        {
+          success: true,
+          message:
+            'Organizer settings fetched',
+          body: {
+            verification: {
+              status:
+                profile?.approvalStatus ??
+                'draft',
+              isPayoutReady:
+                profile?.isPayoutReady ??
+                false,
+              canReceivePayouts:
+                profile?.approvalStatus ===
+                  'approved' &&
+                profile.isPayoutReady,
+            },
+
+            organizationProfile: profile
+              ? {
+                  businessName:
+                    profile.businessName,
+                  category:
+                    profile.category,
+                  city: profile.city,
+                  contactPhone:
+                    profile.contactPhone,
+                  publicEmail:
+                    profile.publicEmail,
+                  bio: profile.bio,
+                }
+              : null,
+
+            payoutAccount:
+              profile?.accountNumber
+                ? {
+                    bankName:
+                      profile.bankName,
+                    accountName:
+                      profile.accountName,
+                    accountNumberLast4:
+                      profile.accountNumber.slice(
+                        -4,
+                      ),
+                    isPayoutReady:
+                      profile.isPayoutReady,
+                  }
+                : null,
+
+            notifications,
+          },
+        },
+      )
+    },
+  )
+
+/**
+ * Partially updates the four organizer notification switches shown on the
+ * Settings page. Unsubmitted preferences retain their existing values.
+ */
+export const updateOrganizerNotificationPreferences =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const input =
+        req.body as Partial<IOrganizerNotificationPreferences>
+
+      const user =
+        await User.findById(
+          req.session.userId,
+        )
+
+      if (!user) {
+        return sendTsRestError(
+          res,
+          404,
+          'User not found',
+        )
+      }
+
+      const existing =
+        user.organizerNotificationPreferences
+
+      user.organizerNotificationPreferences =
+        {
+          newTicketSalesAndRsvps:
+            input.newTicketSalesAndRsvps ??
+            existing
+              ?.newTicketSalesAndRsvps ??
+            false,
+          dailySalesSummary:
+            input.dailySalesSummary ??
+            existing
+              ?.dailySalesSummary ??
+            false,
+          payoutConfirmations:
+            input.payoutConfirmations ??
+            existing
+              ?.payoutConfirmations ??
+            false,
+          eventApprovals:
+            input.eventApprovals ??
+            existing
+              ?.eventApprovals ??
+            false,
+        }
+
+      await user.save()
+
+      return sendTsRestSuccess(
+        res,
+        200,
+        {
+          success: true,
+          message:
+            'Organizer notification preferences updated',
+          body:
+            user.organizerNotificationPreferences,
+        },
+      )
+    },
+  )
 
 /**
  * Nigerian bank list for the "Where should we send your money?" step —

@@ -28,6 +28,13 @@ export interface INotificationPreferences {
   organizerUpdates: boolean
 }
 
+export interface IOrganizerNotificationPreferences {
+  newTicketSalesAndRsvps: boolean
+  dailySalesSummary: boolean
+  payoutConfirmations: boolean
+  eventApprovals: boolean
+}
+
 export interface IUser extends Document {
   _id: mongoose.Types.ObjectId
 
@@ -40,6 +47,8 @@ export interface IUser extends Document {
   avatarUrl?: string
   avatarPublicId?: string
   notificationPreferences: INotificationPreferences
+  organizerNotificationPreferences:
+  IOrganizerNotificationPreferences
   
   role: 'attendee' | 'organizer' | 'admin'
 
@@ -155,6 +164,28 @@ const UserSchema = new Schema<IUser>(
       eventReminders: { type: Boolean, default: true },
       weeklyPicks: { type: Boolean, default: true },
       organizerUpdates: { type: Boolean, default: false },
+    },
+
+        // Organizer-facing settings shown on the dashboard Settings page.
+    // These are separate from attendee reminders and recommendations
+    // because each preference controls a different notification workflow.
+    organizerNotificationPreferences: {
+      newTicketSalesAndRsvps: {
+        type: Boolean,
+        default: false,
+      },
+      dailySalesSummary: {
+        type: Boolean,
+        default: false,
+      },
+      payoutConfirmations: {
+        type: Boolean,
+        default: false,
+      },
+      eventApprovals: {
+        type: Boolean,
+        default: false,
+      },
     },
 
     role: {

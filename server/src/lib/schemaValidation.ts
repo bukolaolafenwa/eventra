@@ -170,6 +170,31 @@ export const organizerProfileSchema = z
     },
   )
 
+export const organizerNotificationPreferencesSchema =
+  z
+    .object({
+      newTicketSalesAndRsvps:
+        z.boolean().optional(),
+      dailySalesSummary:
+        z.boolean().optional(),
+      payoutConfirmations:
+        z.boolean().optional(),
+      eventApprovals:
+        z.boolean().optional(),
+    })
+    .strict()
+    .refine(
+      data =>
+        Object.values(data).some(
+          value =>
+            value !== undefined,
+        ),
+      {
+        message:
+          'Provide at least one notification preference',
+      },
+    )
+
 export const resolveBankAccountSchema = z.object({
   accountNumber: z.string().trim().min(10).max(10),
   bankCode: z.string().trim().min(2),
