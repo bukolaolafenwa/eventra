@@ -51,7 +51,7 @@ declare global {
   }
 }
 
-// just added this to avoid the error "Cannot redeclare block-scoped variable 'Request'." in TypeScript
+// Extend Express Request with application-specific properties.
 
 // Extend express-session SessionData interface
 declare module 'express-session' {
@@ -117,7 +117,27 @@ app.set('trust-proxy', 1)
 app.use(cors(corsOptions))
 app.use(globalLimiter) // Apply rate limiting to all requests
 app.use(express.json({ limit: '25mb' }))
-app.use(express.urlencoded({ extended: true, limit: '25mb' }))
+// app.use(express.urlencoded({ extended: true, limit: '25mb' }))
+app.use(
+  express.json({
+    limit: '25mb',
+    verify: (req, _res, buffer) => {
+      const requestPath =
+        req.url?.split('?')[0]
+
+      if (
+        requestPath ===
+        '/api/v1/payments/paystack/webhook'
+      ) {
+        const expressRequest =
+          req as Request
+
+        expressRequest.rawBody =
+          Buffer.from(buffer)
+      }
+    },
+  }),
+)
 app.disable('x-powered-by')
 
 app.use((req: Request, res: Response, next: NextFunction) => {

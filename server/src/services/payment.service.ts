@@ -7,6 +7,12 @@ import Ticket from '../models/ticket.js'
 import TicketType from '../models/tickettype.js'
 import { EmailService } from './email.service.js'
 import { paystackService } from './paystack.service.js'
+import {
+  payoutService,
+  type PaystackTransferWebhookData,
+  type PaystackTransferWebhookEvent,
+  type ReconciledPayoutResult,
+} from './payout.service.js'
 import { ticketService } from './ticket.service.js'
 
 export interface PaymentConfirmationResult {
@@ -21,15 +27,14 @@ export interface PaymentConfirmationResult {
 
 export interface PaystackWebhookPayload {
   event: string
-  data?: {
-    reference?: string
-  }
+  data?: PaystackTransferWebhookData
 }
 
 export interface WebhookProcessingResult {
   processed: boolean
   event: string
   payment?: PaymentConfirmationResult
+  payout?: ReconciledPayoutResult
 }
 
 export class PaymentService {
@@ -368,10 +373,11 @@ export class PaymentService {
   async processPaystackWebhook(
     payload: PaystackWebhookPayload,
     signature: string | undefined,
+    rawBody: Buffer | undefined,
   ): Promise<WebhookProcessingResult> {
     const signatureIsValid =
       paystackService.validateWebhookSignature(
-        payload,
+        rawBody,
         signature,
       )
 
@@ -382,33 +388,64 @@ export class PaymentService {
       )
     }
 
-    /*
-     * Acknowledge Paystack events that Eventra does not currently
-     * process without treating them as successful payments.
-     */
-    if (payload.event !== 'charge.success') {
+    if (
+      payload.event ===
+      'charge.success'
+    ) {
+      const reference =
+        payload.data?.reference
+
+      if (!reference) {
+        throw new ErrorResponse(
+          'Paystack webhook is missing a payment reference',
+          400,
+        )
+      }
+
+      const payment =
+        await this.confirmPaystackPayment(
+          reference,
+        )
+
       return {
-        processed: false,
+        processed: true,
         event: payload.event,
+        payment,
       }
     }
 
-    const reference = payload.data?.reference
+    const isTransferEvent =
+      payload.event ===
+        'transfer.success' ||
+      payload.event ===
+        'transfer.failed' ||
+      payload.event ===
+        'transfer.reversed'
 
-    if (!reference) {
-      throw new ErrorResponse(
-        'Paystack webhook is missing a payment reference',
-        400,
-      )
+    if (isTransferEvent) {
+      const payout =
+        await payoutService
+          .reconcileTransferWebhook(
+            payload.event as PaystackTransferWebhookEvent,
+            payload.data ?? {},
+          )
+
+      return {
+        processed:
+          payout.processed,
+        event:
+          payload.event,
+        payout,
+      }
     }
 
-    const payment =
-      await this.confirmPaystackPayment(reference)
-
+    /*
+     * Validly signed Paystack events that Eventra does not support are
+     * acknowledged without changing any payment or payout records.
+     */
     return {
-      processed: true,
+      processed: false,
       event: payload.event,
-      payment,
     }
   }
 }

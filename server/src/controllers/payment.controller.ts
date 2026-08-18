@@ -37,6 +37,7 @@ export const handlePaystackWebhook = tryCatchWrapper(
       await paymentService.processPaystackWebhook(
         req.body as PaystackWebhookPayload,
         signature,
+        req.rawBody,
       )
 
     return sendTsRestSuccess(res, 200, {

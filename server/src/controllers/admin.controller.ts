@@ -12,6 +12,11 @@ import Ticket from '../models/ticket.js'
 import User from '../models/user.js'
 import { EmailService } from '../services/email.service.js'
 import { paystackService } from '../services/paystack.service.js'
+import { payoutService } from '../services/payout.service.js'
+
+interface InitiateEventPayoutParams {
+  eventId: string
+}
 
 export const listUsers = tryCatchWrapper(async (req: Request, res: Response) => {
   const { page, limit, skip } = getPagination(req.query)
@@ -447,3 +452,47 @@ export const unsuspendEvent = tryCatchWrapper(async (req: Request, res: Response
     body: event.toObject(),
   })
 })
+
+
+/**
+ * Initiates one admin-approved organizer payout for an eligible paid
+ * event. A 202 response means Paystack accepted the initiation workflow;
+ * it does not mean the organizer has received the money. Final status is
+ * reconciled separately through signed webhooks or transfer verification.
+ */
+export const initiateEventPayout =
+  tryCatchWrapper(
+    async (
+      req: Request<InitiateEventPayoutParams>,
+      res: Response,
+    ) => {
+      const adminId =
+        req.session.userId
+
+      if (!adminId) {
+        return sendTsRestError(
+          res,
+          401,
+          'Unauthorized: admin session is required',
+        )
+      }
+
+      const payout =
+        await payoutService
+          .initiateEventPayout(
+            req.params.eventId,
+            adminId,
+          )
+
+      return sendTsRestSuccess(
+        res,
+        202,
+        {
+          success: true,
+          message:
+            'Payout initiated and awaiting Paystack confirmation',
+          body: payout,
+        },
+      )
+    },
+  )
