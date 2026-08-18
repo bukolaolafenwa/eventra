@@ -3,22 +3,33 @@ import { Router } from 'express'
 import {
   getOrganizerOverview,
   getOrganizerProfile,
+  getOrganizerSettings,
   listBanks,
   listOrganizerPayouts,
   resolveBankAccount,
   submitOrganizerProfileForReview,
+  updateOrganizerNotificationPreferences,
   upsertOrganizerProfile,
 } from '../controllers/organizer.controller.js'
 
-import { verifySession } from '../middlewares/auth.middleware.js'
+import {
+  requireRole,
+  verifySession,
+} from '../middlewares/auth.middleware.js'
 import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
 import { validateFormData } from '../middlewares/schema.middleware.js'
-import { organizerProfileSchema, resolveBankAccountSchema } from '../lib/schemaValidation.js'
-
+import {
+  organizerNotificationPreferencesSchema,
+  organizerProfileSchema,
+  resolveBankAccountSchema,
+} from '../lib/schemaValidation.js'
 const router = Router()
 
-// Every organizer-profile endpoint requires an authenticated session.
-router.use(verifySession)
+// Every organizer endpoint requires an authenticated organizer session.
+router.use(
+  verifySession,
+  requireRole('organizer'),
+)
 
 /**
  * @route   GET /api/v1/organizers/profile
@@ -26,6 +37,30 @@ router.use(verifySession)
  * @access  Authenticated user
  */
 router.get('/profile', getOrganizerProfile)
+
+/**
+ * @route   GET /api/v1/organizers/settings
+ * @desc    Get the complete masked organizer Settings-page state
+ * @access  Organizer
+ */
+router.get(
+  '/settings',
+  getOrganizerSettings,
+)
+
+/**
+ * @route   PATCH /api/v1/organizers/settings/notifications
+ * @desc    Partially update organizer notification preferences
+ * @access  Organizer
+ */
+router.patch(
+  '/settings/notifications',
+  customRateLimiter(10),
+  validateFormData(
+    organizerNotificationPreferencesSchema,
+  ),
+  updateOrganizerNotificationPreferences,
+)
 
 /**
  * @route   PATCH /api/v1/organizers/profile
