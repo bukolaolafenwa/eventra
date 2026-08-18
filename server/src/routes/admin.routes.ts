@@ -5,6 +5,7 @@ import {
   approveOrganizer,
   approveRefundRequest,
   getPlatformStats,
+  initiateEventPayout,
   listPendingEvents,
   listPendingOrganizers,
   listRefundRequests,
@@ -20,7 +21,15 @@ import {
 } from '../controllers/admin.controller.js'
 import { requireAdmin, verifySession } from '../middlewares/auth.middleware.js'
 import { validateFormData } from '../middlewares/schema.middleware.js'
-import { createCategorySchema, rejectEventSchema, rejectRefundRequestSchema, suspendEventSchema, updateCategorySchema } from '../lib/schemaValidation.js'
+import {
+  createCategorySchema,
+  initiatePayoutSchema,
+  rejectEventSchema,
+  rejectRefundRequestSchema,
+  suspendEventSchema,
+  updateCategorySchema,
+} from '../lib/schemaValidation.js'
+import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
 
 const router = Router()
 
@@ -59,6 +68,16 @@ router.patch(
   '/refund-requests/:id/reject',
   validateFormData(rejectRefundRequestSchema),
   rejectRefundRequest
+)
+
+// Organizer payouts
+router.post(
+  '/payouts/events/:eventId/initiate',
+  customRateLimiter(3),
+  validateFormData(
+    initiatePayoutSchema,
+  ),
+  initiateEventPayout,
 )
 
 export default router

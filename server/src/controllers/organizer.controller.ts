@@ -22,56 +22,198 @@ import { paystackService } from '../services/paystack.service.js'
  * submitted yet), never changes approvalStatus — that only moves forward
  * via submitOrganizerProfileForReview below.
  */
-export const upsertOrganizerProfile = tryCatchWrapper(async (req: Request, res: Response) => {
-  const user = await User.findById(req.session.userId)
-  if (!user) {
-    return sendTsRestError(res, 404, 'User not found')
-  }
+export const upsertOrganizerProfile =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const user = await User.findById(
+        req.session.userId,
+      )
 
-  const existing = user.organizerProfile
-  const bankDetailsChanged =
-    !!existing &&
-    ((req.body.accountNumber && req.body.accountNumber !== existing.accountNumber) ||
-      (req.body.bankCode && req.body.bankCode !== existing.bankCode))
+      if (!user) {
+        return sendTsRestError(
+          res,
+          404,
+          'User not found',
+        )
+      }
 
-  const nextApprovalStatus: IOrganizerProfile['approvalStatus'] =
-    existing?.approvalStatus === 'approved' && bankDetailsChanged ? 'pending' : (existing?.approvalStatus ?? 'draft')
+      const existing =
+        user.organizerProfile
 
-  const bankName = req.body.bankName ?? existing?.bankName
-  const bankCode = req.body.bankCode ?? existing?.bankCode
-  const accountNumber = req.body.accountNumber ?? existing?.accountNumber
-  const accountName = req.body.accountName ?? existing?.accountName
+      const submittedBankCode =
+        req.body.bankCode as
+          | string
+          | undefined
 
-  user.organizerProfile = {
-    businessName: req.body.businessName ?? existing?.businessName,
-    category: req.body.category ?? existing?.category,
-    city: req.body.city ?? existing?.city,
-    contactPhone: req.body.contactPhone ?? existing?.contactPhone,
-    publicEmail: req.body.publicEmail ?? existing?.publicEmail,
-    bio: req.body.bio ?? existing?.bio,
-    bankName,
-    bankCode,
-    accountNumber,
-    accountName,
-    // "Ready" just means a fully resolved bank account is on file — this
-    // drives the dashboard's "Finish setting up your account" banner
-    // (see organizer/overview) independently of admin approval, since a
-    // free-events-only organizer can be approved without ever adding one.
-    isPayoutReady: !!(bankName && bankCode && accountNumber && accountName),
-    approvalStatus: nextApprovalStatus,
-    paystackRecipientCode: existing?.paystackRecipientCode,
-    agreedToTerms: req.body.agreedToTerms ?? existing?.agreedToTerms ?? false,
-    submittedAt: existing?.submittedAt,
-  }
+      const submittedAccountNumber =
+        req.body.accountNumber as
+          | string
+          | undefined
 
-  await user.save()
+      const isBankUpdate =
+        submittedBankCode !== undefined ||
+        submittedAccountNumber !==
+          undefined
 
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Organizer profile updated',
-    body: sanitizeUser(user.toObject()),
-  })
-})
+      const bankDetailsChanged =
+        isBankUpdate &&
+        (submittedBankCode !==
+          existing?.bankCode ||
+          submittedAccountNumber !==
+            existing?.accountNumber)
+
+      const nextApprovalStatus:
+        IOrganizerProfile['approvalStatus'] =
+        existing?.approvalStatus ===
+          'approved' &&
+        bankDetailsChanged
+          ? 'pending'
+          : existing?.approvalStatus ??
+            'draft'
+
+      let bankName =
+        existing?.bankName
+      let bankCode =
+        existing?.bankCode
+      let accountNumber =
+        existing?.accountNumber
+      let accountName =
+        existing?.accountName
+      let paystackRecipientCode =
+        existing?.paystackRecipientCode
+
+      /*
+       * Resolve and provision the account again during the save request.
+       * The earlier /resolve-account call is only a frontend preview and
+       * is not trusted as proof that these submitted details are valid.
+       */
+      if (isBankUpdate) {
+        bankCode = submittedBankCode!
+        accountNumber =
+          submittedAccountNumber!
+
+        const resolvedAccount =
+          await paystackService.resolveAccount({
+            accountNumber,
+            bankCode,
+          })
+
+        const recipient =
+          await paystackService
+            .createTransferRecipient({
+              name:
+                resolvedAccount.accountName,
+              accountNumber:
+                resolvedAccount.accountNumber,
+              bankCode,
+              metadata: {
+                organizerId:
+                  user._id.toString(),
+              },
+            })
+
+        if (
+          !recipient.active ||
+          recipient.currency !== 'NGN'
+        ) {
+          return sendTsRestError(
+            res,
+            502,
+            'Paystack did not create an active NGN transfer recipient',
+          )
+        }
+
+        if (
+          recipient.accountNumber !==
+            resolvedAccount.accountNumber ||
+          recipient.bankCode !== bankCode
+        ) {
+          return sendTsRestError(
+            res,
+            502,
+            'Paystack returned transfer recipient details that do not match the verified account',
+          )
+        }
+
+        bankName =
+          recipient.bankName
+        accountName =
+          recipient.accountName ||
+          resolvedAccount.accountName
+        accountNumber =
+          recipient.accountNumber
+        bankCode =
+          recipient.bankCode
+        paystackRecipientCode =
+          recipient.recipientCode
+      }
+
+      const isPayoutReady = Boolean(
+        bankName &&
+          bankCode &&
+          accountNumber &&
+          accountName &&
+          paystackRecipientCode,
+      )
+
+      user.organizerProfile = {
+        businessName:
+          req.body.businessName ??
+          existing?.businessName,
+        category:
+          req.body.category ??
+          existing?.category,
+        city:
+          req.body.city ??
+          existing?.city,
+        contactPhone:
+          req.body.contactPhone ??
+          existing?.contactPhone,
+        publicEmail:
+          req.body.publicEmail ??
+          existing?.publicEmail,
+        bio:
+          req.body.bio ??
+          existing?.bio,
+
+        bankName,
+        bankCode,
+        accountNumber,
+        accountName,
+        isPayoutReady,
+        paystackRecipientCode,
+
+        approvalStatus:
+          nextApprovalStatus,
+        agreedToTerms:
+          req.body.agreedToTerms ??
+          existing?.agreedToTerms ??
+          false,
+        submittedAt:
+          existing?.submittedAt,
+      }
+
+      await user.save()
+
+      return sendTsRestSuccess(
+        res,
+        200,
+        {
+          success: true,
+          message:
+            isBankUpdate
+              ? 'Organizer profile and payout account updated'
+              : 'Organizer profile updated',
+          body: sanitizeUser(
+            user.toObject(),
+          ),
+        },
+      )
+    },
+  )
 
 const REQUIRED_FOR_SUBMISSION: { field: keyof IOrganizerProfile; label: string }[] = [
   { field: 'businessName', label: 'Organization name' },

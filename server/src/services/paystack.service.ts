@@ -28,6 +28,40 @@ export interface PaystackVerifiedTransaction {
   metadata?: Record<string, unknown>
 }
 
+export interface CreateTransferRecipientInput {
+  name: string
+  accountNumber: string
+  bankCode: string
+  metadata?: Record<string, unknown>
+}
+
+export interface PaystackTransferRecipient {
+  recipientCode: string
+  accountName: string
+  accountNumber: string
+  bankCode: string
+  bankName: string
+  currency: string
+  active: boolean
+}
+
+export interface InitiateTransferInput {
+  amountNaira: number
+  recipientCode: string
+  reference: string
+  reason?: string
+}
+
+export interface PaystackTransferResult {
+  reference: string
+  transferCode: string
+  status: string
+  amountKobo: number
+  currency: string
+  reason?: string
+  transferredAt?: string
+}
+
 interface PaystackInitializeResponse {
   status: boolean
   message: string
@@ -51,6 +85,16 @@ interface PaystackVerifyResponse {
     metadata?: Record<string, unknown>
   }
 }
+
+/**
+ * Indicates that Paystack explicitly rejected a transfer request.
+ *
+ * Unlike a timeout or network failure, this is a conclusive response:
+ * Paystack did not accept the transfer, so the payout can safely move to
+ * failed instead of remaining pending for reconciliation.
+ */
+export class PaystackTransferRejectedError
+  extends ErrorResponse {}
 
 export class PaystackService {
   private clientInstance?: AxiosInstance
@@ -335,11 +379,279 @@ export class PaystackService {
     }
   }
 
+    /**
+   * Registers an organizer's verified Nigerian bank account as a Paystack
+   * transfer recipient. Paystack returns the recipient code used for all
+   * future transfers to that account.
+   */
+  async createTransferRecipient(
+    input: CreateTransferRecipientInput,
+  ): Promise<PaystackTransferRecipient> {
+    const name = input.name.trim()
+    const accountNumber =
+      input.accountNumber.trim()
+    const bankCode = input.bankCode.trim()
+
+    if (!name || !accountNumber || !bankCode) {
+      throw new ErrorResponse(
+        'Recipient name, account number and bank code are required',
+        400,
+      )
+    }
+
+    try {
+      const response = await this.client.post<{
+        status: boolean
+        message: string
+        data: {
+          active: boolean
+          currency: string
+          recipient_code: string
+          details: {
+            account_name: string
+            account_number: string
+            bank_code: string
+            bank_name: string
+          }
+        }
+      }>('/transferrecipient', {
+        type: 'nuban',
+        name,
+        account_number: accountNumber,
+        bank_code: bankCode,
+        currency: 'NGN',
+        metadata: input.metadata,
+      })
+
+      if (!response.data.status) {
+        throw new ErrorResponse(
+          response.data.message ||
+            'Paystack could not create the transfer recipient',
+          502,
+        )
+      }
+
+      const recipient = response.data.data
+
+      return {
+        recipientCode:
+          recipient.recipient_code,
+        accountName:
+          recipient.details.account_name,
+        accountNumber:
+          recipient.details.account_number,
+        bankCode:
+          recipient.details.bank_code,
+        bankName:
+          recipient.details.bank_name,
+        currency: recipient.currency,
+        active: recipient.active,
+      }
+    } catch (error: unknown) {
+      if (error instanceof ErrorResponse) {
+        throw error
+      }
+
+      throw new ErrorResponse(
+        `Could not create transfer recipient: ${this.getPaystackErrorMessage(error)}`,
+        502,
+      )
+    }
+  }
+
+  /**
+   * Queues an organizer payout from Eventra's Paystack balance. Returning
+   * from this method does not mean the organizer has been paid; final
+   * success must come from transfer verification or a signed webhook.
+   */
+  async initiateTransfer(
+    input: InitiateTransferInput,
+  ): Promise<PaystackTransferResult> {
+    const recipientCode =
+      input.recipientCode.trim()
+    const reference =
+      input.reference.trim().toLowerCase()
+
+    if (!recipientCode) {
+      throw new ErrorResponse(
+        'Transfer recipient code is required',
+        400,
+      )
+    }
+
+    if (
+      !/^[a-z0-9_-]{16,50}$/.test(reference)
+    ) {
+      throw new ErrorResponse(
+        'Transfer reference must be 16 to 50 characters and contain only lowercase letters, numbers, dashes or underscores',
+        400,
+      )
+    }
+
+    try {
+      const response = await this.client.post<{
+        status: boolean
+        message: string
+        data: {
+          amount: number
+          currency: string
+          reference: string
+          reason?: string
+          status: string
+          transfer_code: string
+          transferred_at?: string | null
+        }
+      }>('/transfer', {
+        source: 'balance',
+        amount: this.convertNairaToKobo(
+          input.amountNaira,
+        ),
+        recipient: recipientCode,
+        reference,
+        reason:
+          input.reason?.trim() ||
+          'Eventra organizer payout',
+        currency: 'NGN',
+      })
+
+            if (!response.data.status) {
+        throw new PaystackTransferRejectedError(
+          response.data.message ||
+            'Paystack could not initiate the transfer',
+          502,
+        )
+      }
+
+      const transfer = response.data.data
+
+      return {
+        reference: transfer.reference,
+        transferCode:
+          transfer.transfer_code,
+        status: transfer.status,
+        amountKobo: transfer.amount,
+        currency: transfer.currency,
+        reason: transfer.reason,
+        transferredAt:
+          transfer.transferred_at ?? undefined,
+      }
+        } catch (error: unknown) {
+      if (
+        error instanceof
+        PaystackTransferRejectedError
+      ) {
+        throw error
+      }
+
+      if (error instanceof ErrorResponse) {
+        throw error
+      }
+
+      /*
+       * An HTTP response means Paystack conclusively rejected the request.
+       * A request without any response may have timed out after Paystack
+       * accepted it, so that outcome must remain ambiguous.
+       */
+      if (
+        axios.isAxiosError(error) &&
+        error.response
+      ) {
+        throw new PaystackTransferRejectedError(
+          `Could not initiate transfer: ${this.getPaystackErrorMessage(
+            error,
+          )}`,
+          502,
+        )
+      }
+
+      throw new ErrorResponse(
+        `Could not initiate transfer: ${this.getPaystackErrorMessage(
+          error,
+        )}`,
+        502,
+      )
+    }
+  }
+
+  /**
+   * Retrieves Paystack's current status for a transfer. This is used for
+   * reconciliation when a webhook is delayed or an initiation request has
+   * an uncertain outcome.
+   */
+  async verifyTransfer(
+    reference: string,
+  ): Promise<PaystackTransferResult> {
+    const normalizedReference =
+      reference.trim().toLowerCase()
+
+    if (
+      !/^[a-z0-9_-]{16,50}$/.test(
+        normalizedReference,
+      )
+    ) {
+      throw new ErrorResponse(
+        'Invalid transfer reference',
+        400,
+      )
+    }
+
+    try {
+      const response = await this.client.get<{
+        status: boolean
+        message: string
+        data: {
+          amount: number
+          currency: string
+          reference: string
+          reason?: string
+          status: string
+          transfer_code: string
+          transferred_at?: string | null
+        }
+      }>(
+        `/transfer/verify/${encodeURIComponent(
+          normalizedReference,
+        )}`,
+      )
+
+      if (!response.data.status) {
+        throw new ErrorResponse(
+          response.data.message ||
+            'Paystack could not verify the transfer',
+          502,
+        )
+      }
+
+      const transfer = response.data.data
+
+      return {
+        reference: transfer.reference,
+        transferCode:
+          transfer.transfer_code,
+        status: transfer.status,
+        amountKobo: transfer.amount,
+        currency: transfer.currency,
+        reason: transfer.reason,
+        transferredAt:
+          transfer.transferred_at ?? undefined,
+      }
+    } catch (error: unknown) {
+      if (error instanceof ErrorResponse) {
+        throw error
+      }
+
+      throw new ErrorResponse(
+        `Could not verify transfer: ${this.getPaystackErrorMessage(error)}`,
+        502,
+      )
+    }
+  }
+
   validateWebhookSignature(
-    payload: unknown,
+    rawBody: Buffer | undefined,
     signature: string | undefined,
   ): boolean {
-    if (!signature) {
+    if (!rawBody || !signature) {
       return false
     }
 
@@ -347,18 +659,27 @@ export class PaystackService {
       'sha512',
       env.PAYSTACK_SECRET_KEY,
     )
-      .update(JSON.stringify(payload))
+      .update(rawBody)
       .digest('hex')
 
-    const receivedBuffer = Buffer.from(signature, 'hex')
-    const expectedBuffer = Buffer.from(expectedSignature, 'hex')
+    const receivedBuffer =
+      Buffer.from(signature, 'hex')
+    const expectedBuffer =
+      Buffer.from(expectedSignature, 'hex')
 
-    if (receivedBuffer.length !== expectedBuffer.length) {
+    if (
+      receivedBuffer.length !==
+      expectedBuffer.length
+    ) {
       return false
     }
 
-    return timingSafeEqual(receivedBuffer, expectedBuffer)
+    return timingSafeEqual(
+      receivedBuffer,
+      expectedBuffer,
+    )
   }
 }
 
-export const paystackService = new PaystackService()
+export const paystackService =
+  new PaystackService()

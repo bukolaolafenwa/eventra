@@ -111,19 +111,64 @@ export const createReservationSchema = z.object({
     .max(4, 'A reservation can contain at most 4 guests'),
 })
 
-export const organizerProfileSchema = z.object({
-  businessName: z.string().trim().min(2).optional(),
-  category: z.string().trim().min(1).optional(),
-  city: z.string().trim().min(2).optional(),
-  contactPhone: z.string().trim().min(7).optional(),
-  publicEmail: z.string().trim().toLowerCase().email().optional(),
-  bio: z.string().trim().max(280).optional(),
-  bankName: z.string().trim().min(2).optional(),
-  bankCode: z.string().trim().min(2).optional(),
-  accountNumber: z.string().trim().min(10).max(10).optional(),
-  accountName: z.string().trim().min(2).optional(),
-  agreedToTerms: z.boolean().optional(),
-})
+// export const organizerProfileSchema = z.object({
+//   businessName: z.string().trim().min(2).optional(),
+//   category: z.string().trim().min(1).optional(),
+//   city: z.string().trim().min(2).optional(),
+//   contactPhone: z.string().trim().min(7).optional(),
+//   publicEmail: z.string().trim().toLowerCase().email().optional(),
+//   bio: z.string().trim().max(280).optional(),
+//   bankName: z.string().trim().min(2).optional(),
+//   bankCode: z.string().trim().min(2).optional(),
+//   accountNumber: z.string().trim().min(10).max(10).optional(),
+//   accountName: z.string().trim().min(2).optional(),
+//   agreedToTerms: z.boolean().optional(),
+// })
+
+export const organizerProfileSchema = z
+  .object({
+    businessName:
+      z.string().trim().min(2).optional(),
+    category:
+      z.string().trim().min(1).optional(),
+    city:
+      z.string().trim().min(2).optional(),
+    contactPhone:
+      z.string().trim().min(7).optional(),
+    publicEmail:
+      z
+        .string()
+        .trim()
+        .toLowerCase()
+        .email()
+        .optional(),
+    bio:
+      z.string().trim().max(280).optional(),
+
+    // The client submits only the account number and bank code.
+    // Account name and bank name are obtained directly from Paystack.
+    bankCode:
+      z.string().trim().min(2).optional(),
+    accountNumber:
+      z
+        .string()
+        .trim()
+        .length(10)
+        .optional(),
+
+    agreedToTerms:
+      z.boolean().optional(),
+  })
+  .refine(
+    data =>
+      Boolean(data.bankCode) ===
+      Boolean(data.accountNumber),
+    {
+      message:
+        'Bank code and account number must be submitted together',
+      path: ['accountNumber'],
+    },
+  )
 
 export const resolveBankAccountSchema = z.object({
   accountNumber: z.string().trim().min(10).max(10),
@@ -373,6 +418,15 @@ export const rejectRefundRequestSchema = z.object({
     .min(3, 'Rejection reason is required')
     .max(500, 'Rejection reason cannot exceed 500 characters'),
 })
+
+/**
+ * Requires an explicit confirmation before an admin can initiate a
+ * real-money organizer payout.
+ */
+export const initiatePayoutSchema =
+  z.object({
+    confirm: z.literal(true),
+  })
 
 export const checkInSchema = z.object({
   code: z.string().trim().min(1, 'code is required'),
