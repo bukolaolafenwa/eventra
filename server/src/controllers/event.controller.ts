@@ -218,6 +218,121 @@ export const listMyEvents = tryCatchWrapper(async (req: Request, res: Response) 
   })
 })
 
+/**
+ * Fetches the raw, full-fidelity event document (every field, no computed
+ * stats) — used by the create/edit wizard to resume a draft. Deliberately
+ * separate from getEventDashboard: that endpoint returns a stats-shaped
+ * view for the event-detail page, not a form-fillable one.
+ */
+export const getMyEventById = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const event = await Event.findOne({ _id: id, organizer: req.session.userId }).lean()
+  if (!event) {
+    return sendTsRestError(res, 404, 'Event not found')
+  }
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Event fetched',
+    body: event,
+  })
+})
+
+/**
+ * Clones an event (and its ticket types) into a fresh draft — the fast
+ * path for "run this again next month" without re-filling the whole
+ * wizard. Deliberately resets everything that shouldn't carry over:
+ * status/dates/sales counters/promotion/lineup images stay put, but the
+ * new copy starts from zero, unpublished, with its own slug.
+ */
+export const duplicateEvent = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { id } = req.params
+  const source = await Event.findOne({ _id: id, organizer: req.session.userId }).lean()
+
+  if (!source) {
+    return sendTsRestError(res, 404, 'Event not found')
+  }
+
+  const title = source.title ? `${source.title} (Copy)` : undefined
+
+  const duplicate = await Event.create({
+    organizer: req.session.userId,
+    title,
+    slug: `${title ? slugify(title) : 'untitled-event'}-${crypto.randomBytes(3).toString('hex')}`,
+    description: source.description,
+    category: source.category,
+    type: source.type,
+    coverImage: source.coverImage,
+    venue: source.venue,
+    capacity: source.capacity,
+    refundPolicy: source.refundPolicy,
+    lineup: source.lineup,
+    agePolicy: source.agePolicy,
+    // Explicitly NOT carried over: startDate/endDate, status
+    // (always starts a fresh draft), isPromoted/promotion, and every
+    // sales/reservation counter.
+  })
+
+  const sourceTicketTypes = await TicketType.find({ event: source._id }).lean()
+  if (sourceTicketTypes.length > 0) {
+    await TicketType.insertMany(
+      sourceTicketTypes.map(ticketType => ({
+        event: duplicate._id,
+        name: ticketType.name,
+        description: ticketType.description,
+        price: ticketType.price,
+        quantity: ticketType.quantity,
+        purchaseLimitPerPerson: ticketType.purchaseLimitPerPerson,
+        isActive: ticketType.isActive,
+        // quantitySold/quantityReserved intentionally omitted — default
+        // to 0, this is a brand-new, unsold batch of tickets.
+      }))
+    )
+
+    // Mirrors the min-price sync in tickettype.service.ts — insertMany
+    // bypasses that service entirely, so Event.minPrice needs the same
+    // recompute done here instead of drifting from what was just inserted.
+    const cheapest = await TicketType.findOne({ event: duplicate._id, isActive: true })
+      .sort({ price: 1 })
+      .select('price')
+      .lean()
+    duplicate.minPrice = cheapest?.price ?? 0
+    await duplicate.save()
+  }
+
+  return sendTsRestSuccess(res, 201, {
+    success: true,
+    message: 'Event duplicated as a new draft',
+    body: duplicate.toObject(),
+  })
+})
+
+// homepage/explore "spotlight" strip — any approved event with an
+// admin-approved, currently-active promotion. Unlike sever-a's reference
+// implementation, this team's promotion packages (config/promotionPackages.ts)
+// don't have separate hero/featured/spotlight placement tiers — just two
+// featured durations — so there's no placement filter to apply here, only
+// recency of promotion.
+export const getSpotlightEvents = tryCatchWrapper(async (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 8, 20)
+
+  const events = await Event.find({
+    status: 'approved',
+    isPromoted: true,
+    'promotion.status': 'approved',
+  })
+    .sort({ 'promotion.startsAt': -1 })
+    .limit(limit)
+    .populate('category', 'name slug')
+    .lean()
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Spotlight events fetched',
+    body: { events },
+  })
+})
+
 // Public — only ever surfaces admin-approved/postponed events.
 export const listPublicEvents = tryCatchWrapper(async (req: Request, res: Response) => {
   const { page, limit, skip } = getPagination(req.query)

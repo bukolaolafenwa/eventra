@@ -7,8 +7,11 @@ import {
   submitEventForApproval,
   withdrawEvent,
   deleteEvent,
+  duplicateEvent,
   listMyEvents,
+  getMyEventById,
   listPublicEvents,
+  getSpotlightEvents,
   getEventDashboard,
   cancelEvent,
   postponeEvent,
@@ -61,6 +64,16 @@ router.post(
 router.get('/', cacheMiddleware(60), listPublicEvents)
 
 /**
+ * @route   GET /api/v1/events/spotlight
+ * @desc    Currently-promoted approved events for the homepage/explore
+ *          spotlight strip
+ * @access  Public
+ * NOTE: registered before GET /:slug for the same reason /my-events is —
+ * a literal path segment must never be swallowed by the generic :slug route.
+ */
+router.get('/spotlight', cacheMiddleware(60), getSpotlightEvents)
+
+/**
  * @route   GET /api/v1/events/my-events
  * @desc    List the current organizer's own events
  * @access  Organizer
@@ -70,6 +83,22 @@ router.get('/', cacheMiddleware(60), listPublicEvents)
  * getEventBySlug instead.
  */
 router.get('/my-events', verifySession, requireRole('organizer'), listMyEvents)
+
+// Alias for sever-a's reference client, which calls /mine instead of
+// /my-events for the same thing — kept as a second route to the same
+// handler rather than renaming /my-events, so neither existing consumer
+// breaks.
+router.get('/mine', verifySession, requireRole('organizer'), listMyEvents)
+
+/**
+ * @route   GET /api/v1/events/my-events/:id
+ * @desc    Fetch the raw event document for the create/edit wizard to resume a draft
+ * @access  Organizer (owner only — enforced in controller)
+ */
+router.get('/my-events/:id', verifySession, requireRole('organizer'), getMyEventById)
+
+// Alias matching sever-a's /mine/:id path — same reasoning as /mine above.
+router.get('/mine/:id', verifySession, requireRole('organizer'), getMyEventById)
 
 /**
  * @route   PATCH /api/v1/events/:id
@@ -178,6 +207,20 @@ router.delete(
  * @access  Organizer (owner only — enforced in controller)
  */
 router.get('/:id/dashboard', verifySession, requireRole('organizer'), getEventDashboard)
+
+/**
+ * @route   POST /api/v1/events/:id/duplicate
+ * @desc    Clone an event (and its ticket types) into a fresh draft
+ * @access  Organizer (owner only — enforced in controller)
+ */
+router.post(
+  '/:id/duplicate',
+  customRateLimiter(5),
+  verifySession,
+  requireRole('organizer'),
+  clearCache('events'),
+  duplicateEvent
+)
 
 /**
  * @route   POST /api/v1/events/:id/promote

@@ -510,20 +510,6 @@ export const listGuestTickets = tryCatchWrapper(async (req: Request, res: Respon
   })
 })
 
-export const myTickets = tryCatchWrapper(async (req: Request, res: Response) => {
-  const tickets = await Ticket.find({ attendee: req.session.userId })
-    .populate('event', 'title slug startDate venue coverImage')
-    .populate('ticketType', 'name')
-    .sort({ createdAt: -1 })
-    .lean()
-
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Tickets fetched',
-    body: tickets,
-  })
-})
-
 export const getTicketQrCode =
   tryCatchWrapper(
     async (

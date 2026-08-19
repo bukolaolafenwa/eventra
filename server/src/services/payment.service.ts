@@ -1,5 +1,6 @@
 import mongoose from 'mongoose'
 
+import { getPromotionPackage } from '../config/promotionPackages.js'
 import { ErrorResponse } from '../middlewares/error.middleware.js'
 import Event from '../models/event.js'
 import Order, { IOrder } from '../models/order.js'
@@ -25,6 +26,13 @@ export interface PaymentConfirmationResult {
   ticketCount: number
 }
 
+export interface PromotionPaymentConfirmationResult {
+  eventId: string
+  reference: string
+  packageId: string
+  alreadyConfirmed: boolean
+}
+
 export interface PaystackWebhookPayload {
   event: string
   data?: PaystackTransferWebhookData
@@ -34,6 +42,7 @@ export interface WebhookProcessingResult {
   processed: boolean
   event: string
   payment?: PaymentConfirmationResult
+  promotionPayment?: PromotionPaymentConfirmationResult
   payout?: ReconciledPayoutResult
 }
 
@@ -370,6 +379,77 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Confirms a promotion payment (see requestPromotion in
+   * promotion.controller.ts, which initializes the transaction with a
+   * PROMO-prefixed reference). Deliberately separate from
+   * confirmPaystackPayment above — a promotion has no Order behind it,
+   * it's a field on Event.promotion, so it needs its own lookup and its
+   * own idempotency check (paidAt already set) rather than sharing that
+   * function's Order-based logic.
+   */
+  async confirmPromotionPayment(
+    reference: string,
+  ): Promise<PromotionPaymentConfirmationResult> {
+    const normalizedReference = reference.trim()
+
+    if (!normalizedReference) {
+      throw new ErrorResponse('Payment reference is required', 400)
+    }
+
+    const event = await Event.findOne({
+      'promotion.paystackReference': normalizedReference,
+    })
+
+    if (!event || !event.promotion) {
+      throw new ErrorResponse(
+        'No promotion request found for this reference',
+        404,
+      )
+    }
+
+    // Idempotent: a webhook retry or a duplicate delivery should not
+    // re-verify with Paystack or re-set fields that are already correct.
+    if (event.promotion.paidAt) {
+      return {
+        eventId: event._id.toString(),
+        reference: normalizedReference,
+        packageId: event.promotion.package,
+        alreadyConfirmed: true,
+      }
+    }
+
+    const pkg = getPromotionPackage(event.promotion.package)
+    if (!pkg) {
+      throw new ErrorResponse(
+        'Unknown promotion package for this event',
+        500,
+      )
+    }
+
+    const transaction = await paystackService.verifyTransaction(
+      normalizedReference,
+      pkg.priceNaira,
+    )
+
+    if (transaction.status !== 'success') {
+      throw new ErrorResponse(
+        `Payment was not successful (status: ${transaction.status})`,
+        402,
+      )
+    }
+
+    event.promotion.paidAt = new Date()
+    await event.save()
+
+    return {
+      eventId: event._id.toString(),
+      reference: normalizedReference,
+      packageId: event.promotion.package,
+      alreadyConfirmed: false,
+    }
+  }
+
   async processPaystackWebhook(
     payload: PaystackWebhookPayload,
     signature: string | undefined,
@@ -400,6 +480,24 @@ export class PaymentService {
           'Paystack webhook is missing a payment reference',
           400,
         )
+      }
+
+      // A promotion payment (see requestPromotion in
+      // promotion.controller.ts) has no Order behind it — it's a field on
+      // Event.promotion — so it can't go through confirmPaystackPayment's
+      // Order-lookup path below. Branch on the PROMO- prefix that
+      // requestPromotion always uses for these references.
+      if (reference.startsWith('PROMO-')) {
+        const promotionPayment =
+          await this.confirmPromotionPayment(
+            reference,
+          )
+
+        return {
+          processed: true,
+          event: payload.event,
+          promotionPayment,
+        }
       }
 
       const payment =
