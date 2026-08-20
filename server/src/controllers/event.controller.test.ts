@@ -18,7 +18,7 @@ import {
 } from 'vitest'
 
 import Event from '../models/event.js'
-import TicketType from '../models/tickettype.js'
+import TicketType from '../models/ticketType.js'
 import {
   duplicateEvent,
   getSpotlightEvents,

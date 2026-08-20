@@ -12,7 +12,7 @@ import Order, {
 } from '../models/order.js'
 import TicketType, {
   ITicketType,
-} from '../models/tickettype.js'
+} from '../models/ticketType.js'
 import { paystackService } from './paystack.service.js'
 
 export interface CheckoutItemInput {

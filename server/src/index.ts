@@ -13,7 +13,7 @@ import eventRoutes from './routes/event.routes.js'
 import categoryRoutes from './routes/category.routes.js'
 import organizerRoutes from './routes/organizer.routes.js'
 import adminRoutes from './routes/admin.routes.js'
-import tickettypeRoutes from './routes/tickettype.routes.js'
+import tickettypeRoutes from './routes/ticketType.routes.js'
 import checkoutRoutes from './routes/checkout.routes.js'
 import paymentRoutes from './routes/payment.routes.js'
 import { startOrderExpiryJob } from "./jobs/orderExpiry.js";

@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 import logger from "../config/logger.js";
 import Order from "../models/order.js";
-import TicketType from "../models/tickettype.js";
+import TicketType from "../models/ticketType.js";
 import { ErrorResponse } from "../middlewares/error.middleware.js";
 import { paymentService } from "./payment.service.js";
 
