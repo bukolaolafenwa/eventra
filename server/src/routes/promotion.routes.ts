@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { listMyPromotions, listPromotionPackages } from '../controllers/promotion.controller.js'
 import { verifySession, requireRole } from '../middlewares/auth.middleware.js'
+import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
 
 const router = Router()
 
@@ -11,6 +12,12 @@ router.get('/packages', listPromotionPackages)
  * @desc    Every event belonging to this organizer that has (or had) a promotion
  * @access  Organizer
  */
-router.get('/mine', verifySession, requireRole('organizer'), listMyPromotions)
+router.get(
+  '/mine',
+  verifySession,
+  requireRole('organizer'),
+  customRateLimiter(5),
+  listMyPromotions,
+)
 
 export default router

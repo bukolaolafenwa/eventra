@@ -34,11 +34,19 @@ const PROMOTION_STATUS_LABEL: Record<string, string> = {
  * unpaid directly against Paystack, same as the webhook would.
  */
 export const listMyPromotions = tryCatchWrapper(async (req: Request, res: Response) => {
-  const unreconciled = await Event.find({
-    organizer: req.session.userId,
-    'promotion.status': 'pending',
-    'promotion.paidAt': { $exists: false },
-  }).select('promotion')
+  const unreconciled =
+  await Event.find({
+    organizer:
+      req.session.userId,
+    'promotion.status':
+      'pending',
+    'promotion.paidAt': {
+      $exists: false,
+    },
+  })
+    .select('promotion')
+    .sort({ updatedAt: 1 })
+    .limit(10)
 
   await Promise.all(
     unreconciled.map(async event => {
@@ -123,9 +131,22 @@ export const requestPromotion = tryCatchWrapper(async (req: Request, res: Respon
   if (event.status !== 'approved') {
     return sendTsRestError(res, 400, 'Only a live approved event can be promoted')
   }
-  if (event.promotion && event.promotion.status === 'pending') {
-    return sendTsRestError(res, 409, 'A promotion request is already pending for this event')
-  }
+  const promotionIsStillActive =
+  event.promotion?.status ===
+    'approved' &&
+  (
+    !event.promotion.endsAt ||
+    event.promotion.endsAt >
+      new Date()
+  )
+
+if (promotionIsStillActive) {
+  return sendTsRestError(
+    res,
+    409,
+    'This event already has an active promotion',
+  )
+}
 
   const organizer = await User.findById(req.session.userId)
   if (!organizer) {

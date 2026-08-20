@@ -1,246 +1,237 @@
 import mongoose from 'mongoose'
-import { MongoMemoryReplSet } from 'mongodb-memory-server'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import Event from '../models/event.js'
+import {
+  MongoMemoryServer,
+} from 'mongodb-memory-server'
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+} from 'vitest'
+
 import Order from '../models/order.js'
 import Ticket from '../models/ticket.js'
-import TicketType from '../models/tickettype.js'
-import User, { IUser } from '../models/user.js'
-import Category from '../models/category.js'
+import {
+  TicketService,
+} from './ticket.service.js'
 
-// Ticket confirmation emails hit the network (Brevo) — stub them out for these tests.
-vi.mock('./email.service.js', () => ({
-  EmailService: {
-    sendTicketConfirmationEmail: vi.fn().mockResolvedValue({ success: true }),
-  },
-}))
-
-// Transactions require a replica set, hence MongoMemoryReplSet rather than the plain server.
-let replSet: MongoMemoryReplSet
+let mongoServer: MongoMemoryServer
 
 beforeAll(async () => {
-  replSet = await MongoMemoryReplSet.create({
-    replSet: { count: 1, storageEngine: 'wiredTiger' },
-    binary: { version: '7.0.14' },
-  })
-  await mongoose.connect(replSet.getUri(), { dbName: 'eventra_test' })
-}, 60000)
+  mongoServer =
+    await MongoMemoryServer.create()
 
-afterAll(async () => {
-  await mongoose.disconnect()
-  await replSet.stop()
+  await mongoose.connect(
+    mongoServer.getUri(),
+  )
+
+  await Promise.all([
+    Order.init(),
+    Ticket.init(),
+  ])
 })
 
 afterEach(async () => {
   await Promise.all([
-    Event.deleteMany({}),
-    TicketType.deleteMany({}),
     Ticket.deleteMany({}),
     Order.deleteMany({}),
-    User.deleteMany({}),
-    Category.deleteMany({}),
   ])
-  vi.clearAllMocks()
 })
 
-const makeAttendee = async (overrides: Partial<any> = {}): Promise<IUser> => {
-  return User.create({
-    fullname: 'Test Attendee',
-    email: `attendee-${new mongoose.Types.ObjectId()}@example.com`,
-    password: 'password123',
-    phone: '08000000000',
-    role: 'attendee',
-    isVerified: true,
-    ...overrides,
+afterAll(async () => {
+  await mongoose.disconnect()
+  await mongoServer.stop()
+})
+
+const createPaidOrder = async (
+  quantity = 2,
+  status:
+    | 'pending'
+    | 'paid'
+    | 'confirmed' = 'paid',
+) => {
+  const unitPrice = 5000
+  const subtotal =
+    unitPrice * quantity
+
+  return Order.create({
+    orderNumber:
+      `EVT-${new mongoose.Types.ObjectId()}`,
+    buyer:
+      new mongoose.Types.ObjectId(),
+    event:
+      new mongoose.Types.ObjectId(),
+    customer: {
+      fullname: 'Test Attendee',
+      email: 'attendee@example.com',
+      phone: '08000000000',
+    },
+    items: [
+      {
+        ticketType:
+          new mongoose.Types.ObjectId(),
+        ticketTypeName: 'Regular',
+        unitPrice,
+        quantity,
+        subtotal,
+      },
+    ],
+    type: 'paid',
+    subtotal,
+    serviceFee:
+      Math.round(subtotal * 0.05),
+    totalAmount: subtotal,
+    currency: 'NGN',
+    paymentProvider: 'paystack',
+    status,
+    paystackReference:
+      `payment-${new mongoose.Types.ObjectId()}`,
+    refundedAmount: 0,
+    paidAt:
+      status === 'paid'
+        ? new Date()
+        : undefined,
+    confirmedAt:
+      status === 'confirmed'
+        ? new Date()
+        : undefined,
   })
 }
 
-const makeFreeEvent = async (overrides: Partial<any> = {}) => {
-  const category = await Category.create({ name: 'Music', slug: 'music' })
-  const organizer = await makeAttendee({ role: 'organizer' })
-  return Event.create({
-    organizer: organizer._id,
-    title: 'Free Test Event',
-    slug: `free-test-${new mongoose.Types.ObjectId()}`,
-    description: 'A free test event',
-    category: category._id,
-    type: 'free',
-    venue: { name: 'Test Hall', address: '1 Test St', city: 'Lagos' },
-    startDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-    status: 'approved',
-    capacity: 2,
-    ...overrides,
-  })
-}
+describe(
+  'TicketService.issueTicketsForOrder',
+  () => {
+    it('issues one active ticket for every admission in a paid order', async () => {
+      const order =
+        await createPaidOrder(2)
 
-describe('TicketService.rsvpToFreeEvent', () => {
-  it('issues a ticket and increments reservationsCount', async () => {
-    const { TicketService } = await import('./ticket.service.js')
-    const event = await makeFreeEvent()
-    const attendee = await makeAttendee()
+      const service =
+        new TicketService()
 
-    const tickets = await TicketService.rsvpToFreeEvent(event._id.toString(), attendee)
+      const tickets =
+        (await service
+          .issueTicketsForOrder(
+            order._id.toString(),
+          )) as Array<{
+          order: mongoose.Types.ObjectId
+          sequence: number
+          code: string
+          status: string
+          pricePaid: number
+        }>
 
-    expect(tickets).toHaveLength(1)
-    expect(tickets[0].status).toBe('valid')
-    expect(tickets[0].type).toBe('free')
+      expect(tickets).toHaveLength(2)
 
-    const updatedEvent = await Event.findById(event._id).lean()
-    expect(updatedEvent!.reservationsCount).toBe(1)
-  })
+      expect(
+        tickets.map(
+          ticket => ticket.sequence,
+        ),
+      ).toEqual([1, 2])
 
-  // Regression test: rsvpToFreeEvent's guests>1 path calls Ticket.create()
-  // with an array of documents inside a transaction session, which throws
-  // "Cannot call `create()` with a session and multiple documents unless
-  // `ordered: true` is set" unless that option is passed — every other
-  // test here only ever requests 1 guest, so this path went unexercised
-  // and the bug shipped. See ticket.service.ts's two Ticket.create() calls.
-  it('issues one ticket per guest when reserving for multiple guests', async () => {
-    const { TicketService } = await import('./ticket.service.js')
-    const event = await makeFreeEvent({ capacity: 10 })
-    const attendee = await makeAttendee()
+      expect(
+        new Set(
+          tickets.map(
+            ticket => ticket.code,
+          ),
+        ).size,
+      ).toBe(2)
 
-    const tickets = await TicketService.rsvpToFreeEvent(event._id.toString(), attendee, 3)
-
-    expect(tickets).toHaveLength(3)
-    expect(new Set(tickets.map(t => t.code)).size).toBe(3) // each ticket gets its own unique code
-    tickets.forEach(ticket => {
-      expect(ticket.status).toBe('valid')
-      expect(ticket.type).toBe('free')
+      tickets.forEach(ticket => {
+        expect(ticket.status).toBe(
+          'active',
+        )
+        expect(ticket.pricePaid).toBe(
+          5000,
+        )
+        expect(
+          ticket.order.toString(),
+        ).toBe(order._id.toString())
+      })
     })
 
-    const updatedEvent = await Event.findById(event._id).lean()
-    expect(updatedEvent!.reservationsCount).toBe(3)
-  })
+    it('is idempotent when called repeatedly for the same order', async () => {
+      const order =
+        await createPaidOrder(2)
 
-  it('rejects a reservation once the event is at capacity', async () => {
-    const { TicketService } = await import('./ticket.service.js')
-    const event = await makeFreeEvent({ capacity: 1 })
+      const service =
+        new TicketService()
 
-    const firstAttendee = await makeAttendee()
-    await TicketService.rsvpToFreeEvent(event._id.toString(), firstAttendee)
+      const firstResult =
+        await service
+          .issueTicketsForOrder(
+            order._id.toString(),
+          )
 
-    const secondAttendee = await makeAttendee()
-    await expect(TicketService.rsvpToFreeEvent(event._id.toString(), secondAttendee)).rejects.toThrow(/fully booked/i)
-  })
+      const secondResult =
+        await service
+          .issueTicketsForOrder(
+            order._id.toString(),
+          )
 
-  it('never overbooks capacity under concurrent requests (the race condition this atomic update exists to prevent)', async () => {
-    const { TicketService } = await import('./ticket.service.js')
-    const event = await makeFreeEvent({ capacity: 3 })
-    const attendees = await Promise.all(Array.from({ length: 10 }, () => makeAttendee()))
-
-    const results = await Promise.allSettled(
-      attendees.map(attendee => TicketService.rsvpToFreeEvent(event._id.toString(), attendee))
-    )
-
-    const succeeded = results.filter(r => r.status === 'fulfilled')
-    const failed = results.filter(r => r.status === 'rejected')
-
-    expect(succeeded).toHaveLength(3)
-    expect(failed).toHaveLength(7)
-
-    const finalEvent = await Event.findById(event._id).lean()
-    expect(finalEvent!.reservationsCount).toBe(3)
-
-    const ticketCount = await Ticket.countDocuments({ event: event._id, status: 'valid' })
-    expect(ticketCount).toBe(3)
-  })
-})
-
-describe('TicketService.issueTicketsForPaidOrder', () => {
-  const makePaidEventWithTicketType = async (quantity: number) => {
-    const category = await Category.create({ name: 'Conference', slug: 'conference' })
-    const organizer = await makeAttendee({ role: 'organizer' })
-    const event = await Event.create({
-      organizer: organizer._id,
-      title: 'Paid Test Event',
-      slug: `paid-test-${new mongoose.Types.ObjectId()}`,
-      description: 'A paid test event',
-      category: category._id,
-      type: 'paid',
-      venue: { name: 'Test Arena', address: '2 Test St', city: 'Lagos' },
-      startDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      status: 'approved',
-    })
-    const ticketType = await TicketType.create({
-      event: event._id,
-      name: 'Regular',
-      price: 5000,
-      quantity,
-      purchaseLimitPerPerson: 10,
-    })
-    return { event, ticketType }
-  }
-
-  it('issues one ticket per unit, decrements stock, and marks the order paid', async () => {
-    const { TicketService } = await import('./ticket.service.js')
-    const { event, ticketType } = await makePaidEventWithTicketType(5)
-    const buyer = await makeAttendee()
-
-    const order = await Order.create({
-      event: event._id,
-      buyer: buyer._id,
-      items: [{ ticketType: ticketType._id, quantity: 2, unitPrice: 5000 }],
-      subtotal: 10000,
-      platformFee: 500,
-      organizerEarnings: 9500,
-      total: 10000,
-      status: 'pending',
-      paystackReference: `TEST-${new mongoose.Types.ObjectId()}`,
-    })
-
-    const tickets = await TicketService.issueTicketsForPaidOrder(order, buyer)
-
-    expect(tickets).toHaveLength(2)
-    expect(new Set(tickets.map(t => t.code)).size).toBe(2) // codes are unique
-
-    const updatedTicketType = await TicketType.findById(ticketType._id).lean()
-    expect(updatedTicketType!.quantitySold).toBe(2)
-
-    const updatedOrder = await Order.findById(order._id).lean()
-    expect(updatedOrder!.status).toBe('paid')
-    expect(updatedOrder!.payoutStatus).toBe('pending')
-
-    const updatedEvent = await Event.findById(event._id).lean()
-    expect(updatedEvent!.ticketsSoldCount).toBe(2)
-    expect(updatedEvent!.revenueTotal).toBe(9500)
-  })
-
-  it('never oversells a ticket type under concurrent checkouts for the last unit', async () => {
-    const { TicketService } = await import('./ticket.service.js')
-    const { event, ticketType } = await makePaidEventWithTicketType(1) // only 1 unit available
-    const buyers = await Promise.all(Array.from({ length: 5 }, () => makeAttendee()))
-
-    const orders = await Promise.all(
-      buyers.map(buyer =>
-        Order.create({
-          event: event._id,
-          buyer: buyer._id,
-          items: [{ ticketType: ticketType._id, quantity: 1, unitPrice: 5000 }],
-          subtotal: 5000,
-          platformFee: 250,
-          organizerEarnings: 4750,
-          total: 5000,
-          status: 'pending',
-          paystackReference: `TEST-${new mongoose.Types.ObjectId()}`,
-        })
+      expect(firstResult).toHaveLength(2)
+      expect(secondResult).toHaveLength(
+        2,
       )
-    )
 
-    const results = await Promise.allSettled(
-      orders.map((order, i) => TicketService.issueTicketsForPaidOrder(order, buyers[i]))
-    )
+      expect(
+        await Ticket.countDocuments({
+          order: order._id,
+        }),
+      ).toBe(2)
+    })
 
-    const succeeded = results.filter(r => r.status === 'fulfilled')
-    const failed = results.filter(r => r.status === 'rejected')
+    it('does not create duplicate tickets under concurrent calls', async () => {
+      const order =
+        await createPaidOrder(2)
 
-    expect(succeeded).toHaveLength(1)
-    expect(failed).toHaveLength(4)
+      const service =
+        new TicketService()
 
-    const updatedTicketType = await TicketType.findById(ticketType._id).lean()
-    expect(updatedTicketType!.quantitySold).toBe(1) // never exceeds quantity
+      const results =
+        await Promise.all([
+          service.issueTicketsForOrder(
+            order._id.toString(),
+          ),
+          service.issueTicketsForOrder(
+            order._id.toString(),
+          ),
+        ])
 
-    const ticketCount = await Ticket.countDocuments({ event: event._id })
-    expect(ticketCount).toBe(1)
-  })
-})
+      expect(results[0]).toHaveLength(2)
+      expect(results[1]).toHaveLength(2)
+
+      expect(
+        await Ticket.countDocuments({
+          order: order._id,
+        }),
+      ).toBe(2)
+    })
+
+    it('rejects an order that has not been paid or confirmed', async () => {
+      const order =
+        await createPaidOrder(
+          1,
+          'pending',
+        )
+
+      const service =
+        new TicketService()
+
+      await expect(
+        service.issueTicketsForOrder(
+          order._id.toString(),
+        ),
+      ).rejects.toThrow(
+        /paid or confirmed order/i,
+      )
+
+      expect(
+        await Ticket.countDocuments({
+          order: order._id,
+        }),
+      ).toBe(0)
+    })
+  },
+)

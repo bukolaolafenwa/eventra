@@ -568,7 +568,7 @@ export const dailySalesSummaryTemplate = (
     `Your sales summary — ${dateLabel}`,
     name,
     `
-      Here's how your events did in the last 24 hours.
+      Here's how your events performed on ${dateLabel}.
 
       ${rows
         .map(

@@ -13,10 +13,13 @@
     }
   ],
   "crons": [
-    
     {
       "path": "/api/cron-payouts",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron-daily-sales-summary",
+      "schedule": "0 6 * * *"
     }
   ]
 }

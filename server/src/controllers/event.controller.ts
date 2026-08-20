@@ -1,5 +1,6 @@
 import crypto from 'crypto'
 import { Request, Response } from 'express'
+import mongoose from 'mongoose'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import {
@@ -239,99 +240,251 @@ export const getMyEventById = tryCatchWrapper(async (req: Request, res: Response
 })
 
 /**
- * Clones an event (and its ticket types) into a fresh draft — the fast
- * path for "run this again next month" without re-filling the whole
- * wizard. Deliberately resets everything that shouldn't carry over:
- * status/dates/sales counters/promotion/lineup images stay put, but the
- * new copy starts from zero, unpublished, with its own slug.
+ * Clones an organizer-owned event and its ticket types into a fresh draft.
+ *
+ * The source dates are retained because Event.startDate is required. The
+ * organizer can change them before submitting the duplicate for approval.
+ * Sales, reservations, publication and promotion state are reset.
+ *
+ * Event and ticket-type creation run in one transaction so a ticket-type
+ * failure cannot leave a partially-created duplicate event behind.
  */
-export const duplicateEvent = tryCatchWrapper(async (req: Request, res: Response) => {
-  const { id } = req.params
-  const source = await Event.findOne({ _id: id, organizer: req.session.userId }).lean()
+export const duplicateEvent =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const { id } = req.params
 
-  if (!source) {
-    return sendTsRestError(res, 404, 'Event not found')
-  }
+      const source =
+        await Event.findOne({
+          _id: id,
+          organizer:
+            req.session.userId,
+        }).lean()
 
-  const title = source.title ? `${source.title} (Copy)` : undefined
+      if (!source) {
+        return sendTsRestError(
+          res,
+          404,
+          'Event not found',
+        )
+      }
 
-  const duplicate = await Event.create({
-    organizer: req.session.userId,
-    title,
-    slug: `${title ? slugify(title) : 'untitled-event'}-${crypto.randomBytes(3).toString('hex')}`,
-    description: source.description,
-    category: source.category,
-    type: source.type,
-    coverImage: source.coverImage,
-    venue: source.venue,
-    capacity: source.capacity,
-    refundPolicy: source.refundPolicy,
-    lineup: source.lineup,
-    agePolicy: source.agePolicy,
-    // Explicitly NOT carried over: startDate/endDate, status
-    // (always starts a fresh draft), isPromoted/promotion, and every
-    // sales/reservation counter.
-  })
+      const sourceTicketTypes =
+        await TicketType.find({
+          event: source._id,
+        }).lean()
 
-  const sourceTicketTypes = await TicketType.find({ event: source._id }).lean()
-  if (sourceTicketTypes.length > 0) {
-    await TicketType.insertMany(
-      sourceTicketTypes.map(ticketType => ({
-        event: duplicate._id,
-        name: ticketType.name,
-        description: ticketType.description,
-        price: ticketType.price,
-        quantity: ticketType.quantity,
-        purchaseLimitPerPerson: ticketType.purchaseLimitPerPerson,
-        isActive: ticketType.isActive,
-        // quantitySold/quantityReserved intentionally omitted — default
-        // to 0, this is a brand-new, unsold batch of tickets.
-      }))
-    )
+      const title =
+        `${source.title} (Copy)`
 
-    // Mirrors the min-price sync in tickettype.service.ts — insertMany
-    // bypasses that service entirely, so Event.minPrice needs the same
-    // recompute done here instead of drifting from what was just inserted.
-    const cheapest = await TicketType.findOne({ event: duplicate._id, isActive: true })
-      .sort({ price: 1 })
-      .select('price')
-      .lean()
-    duplicate.minPrice = cheapest?.price ?? 0
-    await duplicate.save()
-  }
+      const activePrices =
+        sourceTicketTypes
+          .filter(
+            ticketType =>
+              ticketType.isActive,
+          )
+          .map(
+            ticketType =>
+              ticketType.price,
+          )
 
-  return sendTsRestSuccess(res, 201, {
-    success: true,
-    message: 'Event duplicated as a new draft',
-    body: duplicate.toObject(),
-  })
-})
+      const minPrice =
+        activePrices.length > 0
+          ? Math.min(...activePrices)
+          : 0
 
-// homepage/explore "spotlight" strip — any approved event with an
-// admin-approved, currently-active promotion. Unlike sever-a's reference
-// implementation, this team's promotion packages (config/promotionPackages.ts)
-// don't have separate hero/featured/spotlight placement tiers — just two
-// featured durations — so there's no placement filter to apply here, only
-// recency of promotion.
-export const getSpotlightEvents = tryCatchWrapper(async (req: Request, res: Response) => {
-  const limit = Math.min(Number(req.query.limit) || 8, 20)
+      const session =
+        await mongoose.startSession()
 
-  const events = await Event.find({
-    status: 'approved',
-    isPromoted: true,
-    'promotion.status': 'approved',
-  })
-    .sort({ 'promotion.startsAt': -1 })
-    .limit(limit)
-    .populate('category', 'name slug')
-    .lean()
+      let duplicateId:
+        | mongoose.Types.ObjectId
+        | undefined
 
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Spotlight events fetched',
-    body: { events },
-  })
-})
+      try {
+        await session.withTransaction(
+          async (): Promise<void> => {
+            const duplicates =
+              await Event.create(
+                [
+                  {
+                    organizer:
+                      req.session.userId,
+                    title,
+                    slug:
+                      `${slugify(title)}-${crypto
+                        .randomBytes(3)
+                        .toString('hex')}`,
+                    description:
+                      source.description,
+                    category:
+                      source.category,
+                    type: source.type,
+                    coverImage:
+                      source.coverImage,
+                    venue: source.venue,
+                    startDate:
+                      source.startDate,
+                    endDate:
+                      source.endDate,
+                    capacity:
+                      source.capacity,
+                    refundPolicy:
+                      source.refundPolicy,
+                    lineup:
+                      source.lineup,
+                    agePolicy:
+                      source.agePolicy,
+
+                    status: 'draft',
+                    isPromoted: false,
+                    reservationsCount: 0,
+                    ticketsSoldCount: 0,
+                    revenueTotal: 0,
+                    minPrice,
+                  },
+                ],
+                { session },
+              )
+
+            duplicateId =
+              duplicates[0]._id
+
+            if (
+              sourceTicketTypes.length >
+              0
+            ) {
+              await TicketType.insertMany(
+                sourceTicketTypes.map(
+                  ticketType => ({
+                    event:
+                      duplicateId,
+                    name:
+                      ticketType.name,
+                    description:
+                      ticketType.description,
+                    price:
+                      ticketType.price,
+                    currency:
+                      ticketType.currency,
+                    quantity:
+                      ticketType.quantity,
+                    quantitySold: 0,
+                    quantityReserved: 0,
+                    purchaseLimitPerPerson:
+                      ticketType.purchaseLimitPerPerson,
+                    isActive:
+                      ticketType.isActive,
+
+                    // Sales dates are intentionally reset. The organizer
+                    // chooses new dates before submitting the new event.
+                  }),
+                ),
+                {
+                  session,
+                  ordered: true,
+                },
+              )
+            }
+          },
+        )
+      } finally {
+        await session.endSession()
+      }
+
+      if (!duplicateId) {
+        return sendTsRestError(
+          res,
+          500,
+          'Event could not be duplicated',
+        )
+      }
+
+      const duplicate =
+        await Event.findById(
+          duplicateId,
+        ).lean()
+
+      if (!duplicate) {
+        return sendTsRestError(
+          res,
+          500,
+          'Duplicated event could not be reloaded',
+        )
+      }
+
+      return sendTsRestSuccess(
+        res,
+        201,
+        {
+          success: true,
+          message:
+            'Event duplicated as a new draft',
+          body: duplicate,
+        },
+      )
+    },
+  )
+
+export const getSpotlightEvents =
+  tryCatchWrapper(
+    async (
+      req: Request,
+      res: Response,
+    ) => {
+      const requestedLimit =
+        Number(req.query.limit)
+
+      const limit =
+        Number.isInteger(
+          requestedLimit,
+        ) &&
+        requestedLimit > 0
+          ? Math.min(
+              requestedLimit,
+              20,
+            )
+          : 8
+
+      const now = new Date()
+
+      const events =
+        await Event.find({
+          status: 'approved',
+          isPromoted: true,
+          'promotion.status':
+            'approved',
+          'promotion.startsAt': {
+            $lte: now,
+          },
+          'promotion.endsAt': {
+            $gt: now,
+          },
+        })
+          .sort({
+            'promotion.startsAt': -1,
+          })
+          .limit(limit)
+          .populate(
+            'category',
+            'name slug',
+          )
+          .lean()
+
+      return sendTsRestSuccess(
+        res,
+        200,
+        {
+          success: true,
+          message:
+            'Spotlight events fetched',
+          body: { events },
+        },
+      )
+    },
+  )
 
 // Public — only ever surfaces admin-approved/postponed events.
 export const listPublicEvents = tryCatchWrapper(async (req: Request, res: Response) => {
