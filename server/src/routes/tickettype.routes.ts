@@ -6,7 +6,7 @@ import {
   getOrganizerTicketTypesController,
   getPublicTicketTypesController,
   updateTicketTypeController,
-} from "../controllers/ticketType.controller.js";
+} from "../controllers/tickettype.controller.js";
 import {
   requireRole,
   verifySession,
