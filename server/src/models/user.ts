@@ -33,6 +33,12 @@ export interface IOrganizerNotificationPreferences {
   dailySalesSummary: boolean
   payoutConfirmations: boolean
   eventApprovals: boolean
+
+  // Internal cron-delivery markers. These are never returned by the
+  // organizer settings endpoints.
+  dailySalesSummaryLastSentFor?: string
+  dailySalesSummarySendingFor?: string
+  dailySalesSummarySendingAt?: Date
 }
 
 export interface IUser extends Document {
@@ -185,6 +191,19 @@ const UserSchema = new Schema<IUser>(
       eventApprovals: {
         type: Boolean,
         default: false,
+      },
+      // Internal idempotency and lease fields used by the daily-summary cron.
+    dailySalesSummaryLastSentFor: {
+    type: String,
+    select: false,
+      },
+    dailySalesSummarySendingFor: {
+    type: String,
+    select: false,
+      },
+    dailySalesSummarySendingAt: {
+    type: Date,
+    select: false,
       },
     },
 

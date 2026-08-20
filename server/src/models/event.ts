@@ -259,6 +259,16 @@ EventSchema.index({ "venue.city": 1 });
 EventSchema.index({ isPromoted: -1, startDate: 1 });
 EventSchema.index({ status: 1, minPrice: 1 });
 EventSchema.index({ "promotion.status": 1 });
+// A Paystack promotion-payment reference must identify exactly one event.
+EventSchema.index(
+  {
+    'promotion.paystackReference': 1,
+  },
+  {
+    unique: true,
+    sparse: true,
+  },
+)
 EventSchema.index({ title: "text", description: "text" });
 
 // Export pattern — use existing model or create new one

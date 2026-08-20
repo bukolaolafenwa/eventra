@@ -1,6 +1,7 @@
 import { Router } from 'express'
 
 import {
+  getOrganizerNotificationPreferences,
   getOrganizerOverview,
   getOrganizerProfile,
   getOrganizerSettings,
@@ -61,6 +62,14 @@ router.patch(
   ),
   updateOrganizerNotificationPreferences,
 )
+
+/**
+ * @route   GET /api/v1/organizers/notification-preferences
+ * @desc    Alias for sever-a's reference client — narrow notification-prefs
+ *          response, same underlying data as GET /settings
+ * @access  Organizer
+ */
+router.get('/notification-preferences', getOrganizerNotificationPreferences)
 
 /**
  * @route   PATCH /api/v1/organizers/profile

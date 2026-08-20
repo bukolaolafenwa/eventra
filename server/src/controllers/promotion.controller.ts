@@ -2,11 +2,105 @@ import { randomUUID } from 'crypto'
 import { Request, Response } from 'express'
 import { env } from '../config/keys.js'
 import { getPromotionPackage, PROMOTION_PACKAGES } from '../config/promotionPackages.js'
+import logger from '../config/logger.js'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
 import Event from '../models/event.js'
 import User from '../models/user.js'
 import { paystackService } from '../services/paystack.service.js'
+import { paymentService } from '../services/payment.service.js'
+
+const PROMOTION_STATUS_LABEL: Record<string, string> = {
+  pending: 'Pending review',
+  approved: 'Active',
+  rejected: 'Rejected',
+  expired: 'Expired',
+}
+
+/**
+ * Powers the "Your Promotion" table on the Promotions page — every event
+ * belonging to this organizer that has (or has had) a promotion attached.
+ * Each event only ever holds one `promotion` record at a time (see
+ * IEventPromotion on models/event.ts), so this is one row per event, most
+ * recent first — not a full history of past promotion requests.
+ *
+ * Self-heals the same way order-status polling does for ticket orders:
+ * promotion payment is normally confirmed by Paystack's webhook flipping
+ * `promotion.paidAt` (see confirmPromotionPayment in payment.service.ts),
+ * but a webhook that never arrives (unreachable localhost in dev, a
+ * stale/unset dashboard URL, etc.) would otherwise leave a genuinely-paid
+ * promotion stuck 'pending' forever. So before building the response,
+ * re-verify any of this organizer's promotions that are still pending and
+ * unpaid directly against Paystack, same as the webhook would.
+ */
+export const listMyPromotions = tryCatchWrapper(async (req: Request, res: Response) => {
+  const unreconciled =
+  await Event.find({
+    organizer:
+      req.session.userId,
+    'promotion.status':
+      'pending',
+    'promotion.paidAt': {
+      $exists: false,
+    },
+  })
+    .select('promotion')
+    .sort({ updatedAt: 1 })
+    .limit(10)
+
+  await Promise.all(
+    unreconciled.map(async event => {
+      const reference = event.promotion?.paystackReference
+      if (!reference) return
+      try {
+        await paymentService.confirmPromotionPayment(reference)
+      } catch (error: any) {
+        logger.error(`listMyPromotions: reconciliation attempt failed for ${reference}: ${error.message}`)
+      }
+    })
+  )
+
+  const events = await Event.find({ organizer: req.session.userId, promotion: { $exists: true } })
+    .select('title coverImage promotion')
+    .sort({ 'promotion.paidAt': -1, 'promotion.startsAt': -1 })
+    .lean()
+
+  const now = new Date()
+
+  // Team's promotion.status only ever stores 'pending' | 'approved' |
+  // 'rejected' (see IEventPromotion) — there's no stored 'expired' value;
+  // jobs/promotionExpiryCron.ts only ever flips isPromoted to false once
+  // endsAt passes, it never touches status. So 'expired' here is a
+  // computed display state, same as mine's reference implementation.
+  const promotions = events.map(event => {
+    const promotion = event.promotion!
+    const pkg = getPromotionPackage(promotion.package)
+    const isExpired = promotion.status === 'approved' && !!promotion.endsAt && new Date(promotion.endsAt) < now
+    const statusKey = isExpired ? 'expired' : promotion.status
+
+    return {
+      eventId: event._id,
+      eventTitle: event.title,
+      eventCoverImage: event.coverImage,
+      packageId: promotion.package,
+      packageLabel: pkg?.label ?? promotion.package,
+      priceNaira: pkg?.priceNaira ?? null,
+      durationDays: pkg?.durationDays ?? null,
+      startsAt: promotion.startsAt ?? null,
+      endsAt: promotion.endsAt ?? null,
+      status: statusKey,
+      statusLabel: PROMOTION_STATUS_LABEL[statusKey] ?? statusKey,
+      paystackReference: promotion.paystackReference,
+      paid: Boolean(promotion.paidAt),
+    }
+  })
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Promotions fetched',
+    body: promotions,
+  })
+})
 
 export const listPromotionPackages = tryCatchWrapper(async (req: Request, res: Response) => {
   return sendTsRestSuccess(res, 200, {
@@ -37,9 +131,22 @@ export const requestPromotion = tryCatchWrapper(async (req: Request, res: Respon
   if (event.status !== 'approved') {
     return sendTsRestError(res, 400, 'Only a live approved event can be promoted')
   }
-  if (event.promotion && event.promotion.status === 'pending') {
-    return sendTsRestError(res, 409, 'A promotion request is already pending for this event')
-  }
+  const promotionIsStillActive =
+  event.promotion?.status ===
+    'approved' &&
+  (
+    !event.promotion.endsAt ||
+    event.promotion.endsAt >
+      new Date()
+  )
+
+if (promotionIsStillActive) {
+  return sendTsRestError(
+    res,
+    409,
+    'This event already has an active promotion',
+  )
+}
 
   const organizer = await User.findById(req.session.userId)
   if (!organizer) {

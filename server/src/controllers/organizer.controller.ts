@@ -391,6 +391,37 @@ export const getOrganizerSettings =
   )
 
 /**
+ * Alias for sever-a's reference client, which calls a narrow
+ * GET /organizers/notification-preferences returning just the four
+ * notification switches (field name: newSalesRsvps), rather than
+ * this team's broader GET /settings response. Reads the same underlying
+ * user.organizerNotificationPreferences document that getOrganizerSettings
+ * above does — just reshaped to match the reference client's exact
+ * response contract, including renaming newTicketSalesAndRsvps to
+ * newSalesRsvps so an existing frontend built against sever-a doesn't
+ * need its own field-name mapping.
+ */
+export const getOrganizerNotificationPreferences = tryCatchWrapper(async (req: Request, res: Response) => {
+  const user = await User.findById(req.session.userId).select('organizerNotificationPreferences').lean()
+  if (!user) {
+    return sendTsRestError(res, 404, 'User not found')
+  }
+
+  const prefs = user.organizerNotificationPreferences
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Notification preferences fetched',
+    body: {
+      newSalesRsvps: prefs?.newTicketSalesAndRsvps ?? false,
+      dailySalesSummary: prefs?.dailySalesSummary ?? false,
+      payoutConfirmations: prefs?.payoutConfirmations ?? false,
+      eventApprovals: prefs?.eventApprovals ?? false,
+    },
+  })
+})
+
+/**
  * Partially updates the four organizer notification switches shown on the
  * Settings page. Unsubmitted preferences retain their existing values.
  */

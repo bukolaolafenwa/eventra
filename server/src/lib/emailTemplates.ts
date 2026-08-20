@@ -557,3 +557,31 @@ export const verifyAccountTemplate = (name: string, code: string, actionLink?: s
     "This code expires in 15 minutes — don't miss the show.",
     code
   )
+
+export const dailySalesSummaryTemplate = (
+  name: string,
+  dateLabel: string,
+  rows: { eventTitle: string; ticketsSold: number; revenueLabel: string }[],
+  totalRevenueLabel: string
+) =>
+  baseLayout(
+    `Your sales summary — ${dateLabel}`,
+    name,
+    `
+      Here's how your events performed on ${dateLabel}.
+
+      ${rows
+        .map(
+          row => `
+            <div class="ticket-line">
+              <strong style="color: ${INK};">${row.eventTitle}:</strong> ${row.ticketsSold} sold — ${row.revenueLabel}
+            </div>
+          `
+        )
+        .join('')}
+
+      <div class="ticket-line">
+        <strong style="color: ${INK};">Total:</strong> ${totalRevenueLabel}
+      </div>
+    `
+  )
