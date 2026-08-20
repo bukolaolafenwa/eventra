@@ -14,8 +14,11 @@ import User, {
 } from '../models/user.js'
 import Event from '../models/event.js'
 import Order from '../models/order.js'
+import Payout from '../models/payout.js'
 import Ticket from '../models/ticket.js'
+import TicketType from '../models/tickettype.js'
 import { paystackService } from '../services/paystack.service.js'
+import { deriveEventDisplayStatus } from '../lib/eventStatus.js'
 
 /**
  * Create or update the caller's organizer profile (org info + bank
@@ -539,128 +542,215 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+const SIXTY_DAYS_MS = 2 * THIRTY_DAYS_MS
 
+// null (not 0%) when there's no prior-period baseline to compare against —
+// "+100%" off a true zero is misleading, so the client shows no trend at
+// all in that case rather than a made-up number.
 function percentChange(current: number, previous: number): number | null {
-  if (previous === 0) return null // undefined % change from a zero baseline — let the client show "New"
+  if (previous === 0) return null
   return Math.round(((current - previous) / previous) * 100)
 }
 
 /**
+ * "Tickets by type" donut — paid ticket tiers only (Regular/VIP/Table
+ * etc). Free-event RSVPs have no ticketType to break down by (pricePaid
+ * is 0 and ticketType is unset on those), and mixing them in would just
+ * add a meaningless "Free" wedge to what's meant to show ticket-tier mix.
+ */
+async function buildTicketsByType(
+  eventIds: mongoose.Types.ObjectId[]
+): Promise<{ name: string; count: number; percentage: number }[]> {
+  const rows = await Ticket.aggregate([
+    { $match: { event: { $in: eventIds }, pricePaid: { $gt: 0 }, status: { $ne: 'cancelled' } } },
+    { $group: { _id: '$ticketType', count: { $sum: 1 } } },
+    { $lookup: { from: TicketType.collection.name, localField: '_id', foreignField: '_id', as: 'ticketType' } },
+    { $unwind: { path: '$ticketType', preserveNullAndEmptyArrays: true } },
+    { $project: { name: { $ifNull: ['$ticketType.name', 'Other'] }, count: 1 } },
+    { $sort: { count: -1 } },
+  ])
+
+  const total = rows.reduce((sum, row) => sum + row.count, 0)
+  if (total === 0) return []
+
+  return rows.map(row => ({ name: row.name, count: row.count, percentage: Math.round((row.count / total) * 100) }))
+}
+
+/**
+ * Revenue-over-time line chart. "Amount" is the organizer's net take
+ * (subtotal minus Eventra's serviceFee), computed the same way
+ * getEventDashboard's payout figure is, not gross ticket sales.
+ */
+async function buildRevenueSeries(
+  eventIds: mongoose.Types.ObjectId[],
+  period: string
+): Promise<{ label: string; amount: number }[]> {
+  const normalizedPeriod = period === '7d' || period === '1m' ? period : '30d'
+  const now = new Date()
+
+  if (normalizedPeriod === '1m') {
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const orders = await Order.find({
+      event: { $in: eventIds },
+      status: { $in: ['paid', 'partially_refunded'] },
+      createdAt: { $gte: monthStart },
+    })
+      .select('subtotal serviceFee createdAt')
+      .lean()
+
+    const weekCount = Math.ceil((now.getDate() + monthStart.getDay()) / 7)
+    const buckets = Array.from({ length: weekCount }, (_, i) => ({ label: `W${i + 1}`, amount: 0 }))
+
+    for (const order of orders) {
+      const dayOfMonth = new Date(order.createdAt).getDate()
+      const weekIndex = Math.min(Math.floor((dayOfMonth - 1) / 7), buckets.length - 1)
+      buckets[weekIndex].amount += order.subtotal - order.serviceFee
+    }
+    return buckets
+  }
+
+  const days = normalizedPeriod === '7d' ? 7 : 30
+  const startDate = new Date(now)
+  startDate.setDate(startDate.getDate() - (days - 1))
+  startDate.setHours(0, 0, 0, 0)
+
+  const orders = await Order.find({
+    event: { $in: eventIds },
+    status: { $in: ['paid', 'partially_refunded'] },
+    createdAt: { $gte: startDate },
+  })
+    .select('subtotal serviceFee createdAt')
+    .lean()
+
+  const buckets = new Map<string, number>()
+  for (let i = 0; i < days; i++) {
+    const d = new Date(startDate)
+    d.setDate(d.getDate() + i)
+    buckets.set(d.toISOString().slice(0, 10), 0)
+  }
+  for (const order of orders) {
+    const key = new Date(order.createdAt).toISOString().slice(0, 10)
+    if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + (order.subtotal - order.serviceFee))
+  }
+
+  return Array.from(buckets.entries()).map(([date, amount]) => ({ label: date, amount }))
+}
+
+/**
  * Powers the dashboard's Overview page: the 4 stat cards (tickets sold,
- * revenue, live events, payout due) and the "Recent events" table.
+ * revenue, live events, payout due), the tickets-by-type donut, the
+ * revenue line chart, and the "Recent events" table.
+ *
+ * payoutDue/nextPayoutInDays are sourced from this team's dedicated Payout
+ * collection (see models/payout.ts, services/payout.service.ts) — a
+ * different, more mature design than the reference implementation's
+ * Order-embedded payoutStatus/organizerEarnings fields, which don't exist
+ * here. A Payout document only exists once an admin has actually initiated
+ * one (initiateEventPayout in admin.controller.ts) — earnings on events
+ * that haven't reached that step yet aren't reflected in payoutDue below,
+ * same scope as what the dedicated Payout collection itself tracks.
  */
 export const getOrganizerOverview = tryCatchWrapper(async (req: Request, res: Response) => {
   const organizerId = req.session.userId
   const now = new Date()
   const thirtyDaysAgo = new Date(now.getTime() - THIRTY_DAYS_MS)
-  const sixtyDaysAgo = new Date(now.getTime() - 2 * THIRTY_DAYS_MS)
+  const sixtyDaysAgo = new Date(now.getTime() - SIXTY_DAYS_MS)
 
-  const [events, recentEvents, currentPeriodAgg, previousPeriodAgg, payoutDueAgg] = await Promise.all([
-    Event.find({ organizer: organizerId }).select('status').lean(),
-    Event.find({ organizer: organizerId })
-      .select('title slug status type startDate capacity ticketsSoldCount reservationsCount revenueTotal endDate')
-      .sort({ createdAt: -1 })
-      .limit(5)
+  const events = await Event.find({ organizer: organizerId })
+    .select('title slug coverImage type status startDate endDate capacity ticketsSoldCount reservationsCount revenueTotal category')
+    .populate('category', 'name')
+    .sort({ createdAt: -1 })
+    .lean()
+
+  let ticketsSold = 0
+  let revenue = 0
+  let liveCount = 0
+
+  const recentEvents = events.slice(0, 6).map(event => {
+    const soldCount = event.type === 'free' ? event.reservationsCount : event.ticketsSoldCount
+    const displayStatus = deriveEventDisplayStatus(event)
+    return {
+      _id: event._id,
+      title: event.title,
+      slug: event.slug,
+      coverImage: event.coverImage,
+      category: (event.category as any)?.name,
+      startDate: event.startDate,
+      soldCount,
+      capacity: event.capacity ?? null,
+      status: displayStatus,
+      statusLabel: STATUS_LABEL[displayStatus] ?? displayStatus,
+    }
+  })
+
+  for (const event of events) {
+    ticketsSold += event.ticketsSoldCount + event.reservationsCount
+    revenue += event.revenueTotal
+    if (deriveEventDisplayStatus(event) === 'live') liveCount += 1
+  }
+
+  const eventIds = events.map(event => event._id)
+
+  const [pendingPayouts, nextPendingPayout, periodTotals, ticketsByType, revenueSeries] = await Promise.all([
+    Payout.aggregate<{ amount: number }>([
+      { $match: { organizer: new mongoose.Types.ObjectId(organizerId), status: { $in: ['pending', 'processing', 'otp_required'] } } },
+      { $group: { _id: null, amount: { $sum: '$netAmount' } } },
+    ]),
+    Payout.findOne({ organizer: organizerId, status: { $in: ['pending', 'processing', 'otp_required'] } })
+      .sort({ eligibleAt: 1 })
+      .select('eligibleAt')
       .lean(),
+    // Powers "vs last month" on the tickets sold / revenue cards — two
+    // real 30-day windows from paid orders, not a made-up figure.
     Order.aggregate([
-      { $match: { status: { $in: ['paid', 'partially_refunded'] }, paidAt: { $gte: thirtyDaysAgo } } },
-      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
-      { $unwind: '$eventDoc' },
-      { $match: { 'eventDoc.organizer': new mongoose.Types.ObjectId(organizerId) } },
-      { $group: { _id: null, ticketsSold: { $sum: { $sum: '$items.quantity' } }, revenue: { $sum: '$subtotal' } } },
-    ]),
-    Order.aggregate([
-      { $match: { status: { $in: ['paid', 'partially_refunded'] }, paidAt: { $gte: sixtyDaysAgo, $lt: thirtyDaysAgo } } },
-      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
-      { $unwind: '$eventDoc' },
-      { $match: { 'eventDoc.organizer': new mongoose.Types.ObjectId(organizerId) } },
-      { $group: { _id: null, ticketsSold: { $sum: { $sum: '$items.quantity' } }, revenue: { $sum: '$subtotal' } } },
-    ]),
-    // Held for a few days after the event per the standard payout-delay
-    // policy — only orders on events that have already ended are "due".
-    Order.aggregate<{ amountDue: number }>([
-  {
-    $match: {
-      status: 'paid',
-    },
-  },
-  {
-    $lookup: {
-      from: 'events',
-      localField: 'event',
-      foreignField: '_id',
-      as: 'eventDoc',
-    },
-  },
-  {
-    $unwind: '$eventDoc',
-  },
-  {
-    $match: {
-      'eventDoc.organizer':
-        new mongoose.Types.ObjectId(
-          organizerId,
-        ),
-      'eventDoc.endDate': {
-        $lt: now,
-      },
-    },
-  },
-  {
-    $group: {
-      _id: null,
-      amountDue: {
-        $sum: {
-          $subtract: [
-            '$subtotal',
-            '$serviceFee',
-          ],
+      {
+        $match: {
+          event: { $in: eventIds },
+          status: { $in: ['paid', 'partially_refunded'] },
+          createdAt: { $gte: sixtyDaysAgo },
         },
       },
-    },
-  },
-]),
+      {
+        $group: {
+          _id: { $cond: [{ $gte: ['$createdAt', thirtyDaysAgo] }, 'current', 'previous'] },
+          tickets: { $sum: { $sum: '$items.quantity' } },
+          revenue: { $sum: { $subtract: ['$subtotal', '$serviceFee'] } },
+        },
+      },
+    ]),
+    buildTicketsByType(eventIds),
+    buildRevenueSeries(eventIds, (req.query.period as string) ?? '30d'),
   ])
 
-  const liveEvents = events.filter(e => e.status === 'approved').length
+  const payoutDue = pendingPayouts[0]?.amount ?? 0
 
-  const currentTicketsSold = currentPeriodAgg[0]?.ticketsSold ?? 0
-  const currentRevenue = currentPeriodAgg[0]?.revenue ?? 0
-  const previousTicketsSold = previousPeriodAgg[0]?.ticketsSold ?? 0
-  const previousRevenue = previousPeriodAgg[0]?.revenue ?? 0
+  let nextPayoutInDays: number | null = null
+  if (nextPendingPayout?.eligibleAt) {
+    const msRemaining = new Date(nextPendingPayout.eligibleAt).getTime() - Date.now()
+    nextPayoutInDays = Math.max(Math.ceil(msRemaining / (24 * 60 * 60 * 1000)), 0)
+  }
 
-  // PRD Section 8: Eventra retains 5% commission, organizer gets the remainder.
-  const payoutDue =
-  payoutDueAgg[0]?.amountDue ?? 0
+  const currentPeriod = periodTotals.find(p => p._id === 'current') ?? { tickets: 0, revenue: 0 }
+  const previousPeriod = periodTotals.find(p => p._id === 'previous') ?? { tickets: 0, revenue: 0 }
 
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Overview fetched',
     body: {
-      ticketsSold: { value: currentTicketsSold, changePercent: percentChange(currentTicketsSold, previousTicketsSold) },
-      revenue: { value: currentRevenue, changePercent: percentChange(currentRevenue, previousRevenue) },
-      liveEvents,
+      ticketsSold,
+      ticketsSoldChangePct: percentChange(currentPeriod.tickets, previousPeriod.tickets),
+      revenue,
+      revenueChangePct: percentChange(currentPeriod.revenue, previousPeriod.revenue),
+      liveEventsCount: liveCount,
       payoutDue,
-      recentEvents: recentEvents.map(event => ({
-        title: event.title,
-        slug: event.slug,
-        type: event.type,
-        startDate: event.startDate,
-        soldCount: event.type === 'free' ? event.reservationsCount : event.ticketsSoldCount,
-        capacity: event.capacity ?? null,
-        revenue: event.revenueTotal,
-        statusLabel: STATUS_LABEL[event.status] ?? event.status,
-      })),
+      nextPayoutInDays,
+      recentEvents,
+      revenueSeries,
+      ticketsByType,
     },
   })
 })
 
-/**
- * Lists completed paid orders across the organizer's events, with
- * a payout-status breakdown for the dashboard's Payouts page.
- * Partially refunded orders remain excluded until refund
- * reconciliation is implemented.
- */
 export const listOrganizerPayouts = tryCatchWrapper(async (req: Request, res: Response) => {
   const organizerId = req.session.userId
   const { page, limit, skip } = getPagination(req.query)
