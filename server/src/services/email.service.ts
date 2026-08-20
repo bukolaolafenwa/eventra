@@ -1,5 +1,6 @@
 import sendEmail from '../email/send-email.js'
 import {
+  dailySalesSummaryTemplate,
   eventApprovedTemplate,
   eventRejectedTemplate,
   guestTicketAccessTemplate,
@@ -183,6 +184,20 @@ export class EmailService {
       email: user.email,
       subject: 'Your refund has been processed',
       message: refundProcessedTemplate(user.fullname, eventTitle, amountLabel),
+    })
+    return { success: result.success }
+  }
+
+  static async sendDailySalesSummaryEmail(
+    organizer: any,
+    dateLabel: string,
+    rows: { eventTitle: string; ticketsSold: number; revenueLabel: string }[],
+    totalRevenueLabel: string
+  ): Promise<{ success: boolean }> {
+    const result = await sendEmail({
+      email: organizer.email,
+      subject: `Your sales summary — ${dateLabel}`,
+      message: dailySalesSummaryTemplate(organizer.fullname, dateLabel, rows, totalRevenueLabel),
     })
     return { success: result.success }
   }

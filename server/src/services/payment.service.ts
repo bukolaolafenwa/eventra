@@ -1,5 +1,6 @@
 import mongoose from 'mongoose'
 
+import { getPromotionPackage } from '../config/promotionPackages.js'
 import { ErrorResponse } from '../middlewares/error.middleware.js'
 import Event from '../models/event.js'
 import Order, { IOrder } from '../models/order.js'
@@ -25,6 +26,13 @@ export interface PaymentConfirmationResult {
   ticketCount: number
 }
 
+export interface PromotionPaymentConfirmationResult {
+  eventId: string
+  reference: string
+  packageId: string
+  alreadyConfirmed: boolean
+}
+
 export interface PaystackWebhookPayload {
   event: string
   data?: PaystackTransferWebhookData
@@ -34,6 +42,7 @@ export interface WebhookProcessingResult {
   processed: boolean
   event: string
   payment?: PaymentConfirmationResult
+  promotionPayment?: PromotionPaymentConfirmationResult
   payout?: ReconciledPayoutResult
 }
 
@@ -370,6 +379,131 @@ export class PaymentService {
     }
   }
 
+/**
+ * Verifies and confirms a Paystack payment for an event promotion.
+ *
+ * Promotion payments are stored directly on the Event rather than in an
+ * Order, so the event is located using its unique Paystack reference.
+ * Verification checks the expected package amount, NGN currency, payment
+ * status, reference and Paystack metadata before recording payment.
+ *
+ * The conditional update makes confirmation idempotent and race-safe:
+ * repeated callbacks, browser verification and webhook deliveries cannot
+ * confirm or mutate the same promotion payment more than once.
+ */
+ async confirmPromotionPayment(
+  reference: string,
+): Promise<PromotionPaymentConfirmationResult> {
+  const normalizedReference =
+    reference.trim()
+
+  if (!normalizedReference) {
+    throw new ErrorResponse(
+      'Payment reference is required',
+      400,
+    )
+  }
+
+  const event =
+    await Event.findOne({
+      'promotion.paystackReference':
+        normalizedReference,
+    }).lean()
+
+  if (!event || !event.promotion) {
+    throw new ErrorResponse(
+      'No promotion request found for this reference',
+      404,
+    )
+  }
+
+  if (event.promotion.paidAt) {
+    return {
+      eventId:
+        event._id.toString(),
+      reference:
+        normalizedReference,
+      packageId:
+        event.promotion.package,
+      alreadyConfirmed: true,
+    }
+  }
+
+  const pkg =
+    getPromotionPackage(
+      event.promotion.package,
+    )
+
+  if (!pkg) {
+    throw new ErrorResponse(
+      'Unknown promotion package for this event',
+      500,
+    )
+  }
+
+  const transaction =
+    await paystackService
+      .verifyTransaction(
+        normalizedReference,
+        pkg.priceNaira,
+      )
+
+  const metadataEventId =
+    transaction.metadata?.eventId
+
+  const metadataPackageId =
+    transaction.metadata?.packageId
+
+  if (
+    metadataEventId !==
+      event._id.toString() ||
+    metadataPackageId !==
+      event.promotion.package
+  ) {
+    throw new ErrorResponse(
+      'Verified promotion payment metadata does not match the promotion request',
+      409,
+    )
+  }
+
+  const paidAt =
+    transaction.paidAt
+      ? new Date(
+          transaction.paidAt,
+        )
+      : new Date()
+
+  const updateResult =
+    await Event.updateOne(
+      {
+        _id: event._id,
+        'promotion.paystackReference':
+          normalizedReference,
+        'promotion.paidAt': {
+          $exists: false,
+        },
+      },
+      {
+        $set: {
+          'promotion.paidAt':
+            paidAt,
+        },
+      },
+    )
+
+  return {
+    eventId:
+      event._id.toString(),
+    reference:
+      normalizedReference,
+    packageId:
+      event.promotion.package,
+    alreadyConfirmed:
+      updateResult.modifiedCount ===
+      0,
+  }
+}
+
   async processPaystackWebhook(
     payload: PaystackWebhookPayload,
     signature: string | undefined,
@@ -400,6 +534,24 @@ export class PaymentService {
           'Paystack webhook is missing a payment reference',
           400,
         )
+      }
+
+      // A promotion payment (see requestPromotion in
+      // promotion.controller.ts) has no Order behind it — it's a field on
+      // Event.promotion — so it can't go through confirmPaystackPayment's
+      // Order-lookup path below. Branch on the PROMO- prefix that
+      // requestPromotion always uses for these references.
+      if (reference.startsWith('PROMO-')) {
+        const promotionPayment =
+          await this.confirmPromotionPayment(
+            reference,
+          )
+
+        return {
+          processed: true,
+          event: payload.event,
+          promotionPayment,
+        }
       }
 
       const payment =

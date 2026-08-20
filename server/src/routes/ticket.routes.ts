@@ -5,12 +5,10 @@ import {
   getTicketQrCode,
   getTicketQrCodeImage,
   listGuestTickets,
-  myTickets,
   requestGuestTicketAccess,
   requestRefund,
   verifyGuestTicketAccess,
 } from '../controllers/ticket.controller.js'
-import { verifySession } from '../middlewares/auth.middleware.js'
 import {
   guestTicketAccessRequestSchema,
   guestTicketAccessVerifySchema,
@@ -21,7 +19,11 @@ import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
 
 const router = Router()
 
-router.get('/my-tickets', verifySession, myTickets)
+// GET /my-tickets is handled by ticket-history.routes.ts (also mounted at
+// /api/v1/tickets) — that implementation is paginated and view-filterable
+// (upcoming/past/all); this file used to have its own basic version too,
+// but it was fully shadowed by ticket-history's route being mounted first,
+// so it's been removed rather than left as dead, unreachable code.
 
 // "Track my ticket by email" — for a guest who wants to view/manage a
 // ticket later, whether or not the confirmation email actually arrived.
