@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 import Event, { IEvent } from "../models/event.js";
-import TicketType, { ITicketType } from "../models/tickettype.js";
+import TicketType, { ITicketType } from "../models/ticketType.js";
 import { ErrorResponse } from "../middlewares/error.middleware.js";
 
 export interface CreateTicketTypeInput {
