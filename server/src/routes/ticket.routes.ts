@@ -4,15 +4,19 @@ import {
   getOrderByReference,
   getTicketQrCode,
   getTicketQrCodeImage,
+  initializeCheckout,
   listGuestTickets,
   requestGuestTicketAccess,
   requestRefund,
+  rsvpFreeEvent,
   verifyGuestTicketAccess,
 } from '../controllers/ticket.controller.js'
 import {
   guestTicketAccessRequestSchema,
   guestTicketAccessVerifySchema,
   refundRequestSchema,
+  referenceCheckoutSchema,
+  referenceRsvpSchema,
 } from '../lib/schemaValidation.js'
 import { validateFormData } from '../middlewares/schema.middleware.js'
 import { customRateLimiter } from '../middlewares/rateLimit.middleware.js'
@@ -24,6 +28,13 @@ const router = Router()
 // (upcoming/past/all); this file used to have its own basic version too,
 // but it was fully shadowed by ticket-history's route being mounted first,
 // so it's been removed rather than left as dead, unreachable code.
+
+// Adapters for sever-a's (reference frontend client) exact request/response
+// contract — same underlying logic as checkout.routes.ts (/events/:eventId/checkout)
+// and reservation.routes.ts (/events/:eventId/reservations), just reshaped.
+// Kept alongside those, not replacing them, so neither client breaks.
+router.post('/checkout/:eventId', customRateLimiter(10), validateFormData(referenceCheckoutSchema), initializeCheckout)
+router.post('/rsvp/:eventId', customRateLimiter(10), validateFormData(referenceRsvpSchema), rsvpFreeEvent)
 
 // "Track my ticket by email" — for a guest who wants to view/manage a
 // ticket later, whether or not the confirmation email actually arrived.

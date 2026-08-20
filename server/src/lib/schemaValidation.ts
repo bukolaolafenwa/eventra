@@ -476,3 +476,32 @@ export const guestTicketAccessVerifySchema = z.object({
   email: z.string().trim().toLowerCase().email('Enter a valid email address'),
   otp: z.string().trim().length(6, 'Enter the 6-digit code'),
 })
+
+// Matches sever-a's (the reference frontend client) exact request contract
+// for /tickets/checkout/:eventId and /tickets/rsvp/:eventId — a flat body
+// with optional top-level guest fields, rather than this project's own
+// checkoutSchema/createReservationSchema above, which nest a required
+// `customer` object. Kept as separate schemas (not a replacement) since
+// the two request shapes are genuinely different, not just renamed.
+export const referenceCheckoutSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        ticketTypeId: z.string().trim().min(1, 'ticketTypeId is required'),
+        quantity: z.number().int().positive('quantity must be a positive integer'),
+      })
+    )
+    .min(1, 'At least one ticket item is required'),
+  // Only required when there's no session — resolveAttendeeInfo
+  // (lib/attendee.ts) is what actually enforces that.
+  guestName: z.string().trim().min(2).optional(),
+  guestEmail: z.string().trim().toLowerCase().email().optional(),
+  guestPhone: z.string().trim().min(7).optional(),
+})
+
+export const referenceRsvpSchema = z.object({
+  guests: z.number().int().min(1).max(4).optional(),
+  guestName: z.string().trim().min(2).optional(),
+  guestEmail: z.string().trim().toLowerCase().email().optional(),
+  guestPhone: z.string().trim().min(7).optional(),
+})
