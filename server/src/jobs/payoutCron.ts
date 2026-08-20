@@ -1,7 +1,7 @@
 import logger from '../config/logger.js'
 import Order from '../models/order.js'
 import User from '../models/user.js'
-import { PaystackService } from '../services/paystack.service.js'
+import { paystackService } from '../services/paystack.service.js'
 
 // Funds are held until a few days after the event, per the PRD.
 const PAYOUT_DELAY_DAYS = 3
@@ -42,9 +42,8 @@ export const processDuePayouts = async (): Promise<{ processed: number; initiate
         skipped++
         continue
       }
-
-      await PaystackService.initiateTransfer({
-        amountKobo: Math.round(order.organizerEarnings * 100),
+      await paystackService.initiateTransfer({
+        amountNaira: order.organizerEarnings,
         recipientCode,
         reason: `Eventra payout — ${order.eventDoc.title}`,
         reference: `PAYOUT-${order._id}`,

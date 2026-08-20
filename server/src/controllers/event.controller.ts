@@ -14,7 +14,7 @@ import {
 import Category from '../models/category.js'
 import Event from '../models/event.js'
 import Ticket from '../models/ticket.js'
-import TicketType from '../models/ticketType.js'
+import TicketType from '../models/tickettype.js'
 import User from '../models/user.js'
 import Order from '../models/order.js'
 
