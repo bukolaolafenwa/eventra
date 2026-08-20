@@ -16,7 +16,7 @@ import Event from '../models/event.js'
 import Order from '../models/order.js'
 import Payout from '../models/payout.js'
 import Ticket from '../models/ticket.js'
-import TicketType from '../models/ticketType.js'
+import TicketType from '../models/tickettype.js'
 import { paystackService } from '../services/paystack.service.js'
 import { deriveEventDisplayStatus } from '../lib/eventStatus.js'
 

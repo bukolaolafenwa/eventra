@@ -5,7 +5,7 @@ import { ErrorResponse } from '../middlewares/error.middleware.js'
 import Event from '../models/event.js'
 import Order, { IOrder } from '../models/order.js'
 import Ticket from '../models/ticket.js'
-import TicketType from '../models/ticketType.js'
+import TicketType from '../models/tickettype.js'
 import { EmailService } from './email.service.js'
 import { paystackService } from './paystack.service.js'
 import {
