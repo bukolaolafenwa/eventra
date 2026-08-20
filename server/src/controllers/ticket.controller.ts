@@ -8,13 +8,15 @@ import Order from '../models/order.js'
 import RefundRequest from '../models/refundRequest.js'
 import Ticket from '../models/ticket.js'
 import { paymentService } from '../services/payment.service.js'
-import { ticketBelongsToRequester } from '../lib/attendee.js'
+import { resolveAttendeeInfo, ticketBelongsToRequester } from '../lib/attendee.js'
 import { generateQrCodeBuffer, generateQrCodeDataUrl } from '../lib/qrcode.js'
 import { checkRefundEligibility } from '../lib/refundPolicy.js'
 import { generateOTP, isValidObjectId } from '../lib/utils.js'
 import GuestAccessCode from '../models/guestAccessCode.js'
 import { EmailService } from '../services/email.service.js'
 import logger from '../config/logger.js'
+import { checkoutService } from '../services/checkout.service.js'
+import { reservationService } from '../services/reservation.service.js'
 
 // A ticket-identifier helper
 // Support public TK_IDs and legacy MongoDB ticket IDs.
@@ -594,4 +596,91 @@ export const getTicketQrCodeImage = tryCatchWrapper(async (req: Request, res: Re
   // endpoint more than once per client.
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
   return res.send(qrCodeBuffer)
+})
+
+/**
+ * Adapter for sever-a's (the reference frontend client) exact
+ * /tickets/checkout/:eventId contract — flat request body, guest fields
+ * optional (only required when there's no session — resolveAttendeeInfo
+ * enforces that), response shaped as { orderId, reference,
+ * authorizationUrl, total }. The actual checkout logic — inventory
+ * locking via a Mongo transaction, order creation, Paystack
+ * initialization — is entirely checkoutService.createPaidCheckout's
+ * (see checkout.controller.ts for this project's own nested-customer
+ * version of the same endpoint); this only translates the request in and
+ * the response back out.
+ */
+export const initializeCheckout = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { eventId } = req.params
+  const { items, guestName, guestEmail, guestPhone } = req.body as {
+    items: { ticketTypeId: string; quantity: number }[]
+    guestName?: string
+    guestEmail?: string
+    guestPhone?: string
+  }
+
+  const attendee = await resolveAttendeeInfo(req, { guestName, guestEmail, guestPhone })
+  if (!attendee) {
+    return sendTsRestError(res, 400, 'Log in, or provide your name and email to check out without an account')
+  }
+
+  const checkout = await checkoutService.createPaidCheckout({
+    eventId: eventId as string,
+    buyerId: attendee.userId,
+    customer: { fullname: attendee.fullname, email: attendee.email, phone: attendee.phone },
+    items,
+  })
+
+  return sendTsRestSuccess(res, 201, {
+    success: true,
+    message: 'Checkout initialized',
+    body: {
+      orderId: checkout.orderId,
+      reference: checkout.reference,
+      authorizationUrl: checkout.authorizationUrl,
+      total: checkout.totalAmount,
+    },
+  })
+})
+
+/**
+ * Adapter for sever-a's exact /tickets/rsvp/:eventId contract — same
+ * translation approach as initializeCheckout above. Notably reshapes the
+ * response: reservationService.createReservation only returns
+ * ticketCodes (strings), but the reference client expects an array of
+ * full ticket documents (same shape myTickets/getOrderByReference
+ * return), so the created tickets are re-fetched by code before
+ * responding.
+ */
+export const rsvpFreeEvent = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { eventId } = req.params
+  const { guests, guestName, guestEmail, guestPhone } = req.body as {
+    guests?: number
+    guestName?: string
+    guestEmail?: string
+    guestPhone?: string
+  }
+
+  const attendee = await resolveAttendeeInfo(req, { guestName, guestEmail, guestPhone })
+  if (!attendee) {
+    return sendTsRestError(res, 400, 'Log in, or provide your name and email to reserve without an account')
+  }
+
+  const reservation = await reservationService.createReservation({
+    eventId: eventId as string,
+    buyerId: attendee.userId,
+    customer: { fullname: attendee.fullname, email: attendee.email, phone: attendee.phone },
+    quantity: guests ?? 1,
+  })
+
+  const tickets = await Ticket.find({ code: { $in: reservation.ticketCodes } })
+    .populate('event', 'title slug startDate venue coverImage')
+    .populate('ticketType', 'name')
+    .lean()
+
+  return sendTsRestSuccess(res, 201, {
+    success: true,
+    message: tickets.length > 1 ? `Reservation confirmed for ${tickets.length} guests` : 'Reservation confirmed',
+    body: tickets,
+  })
 })

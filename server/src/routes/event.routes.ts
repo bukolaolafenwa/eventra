@@ -135,7 +135,7 @@ router.patch(
  * @desc    Submit a draft/rejected event for admin approval
  * @access  Organizer (owner only — enforced in controller)
  */
-router.patch(
+router.post(
   '/:id/submit',
   customRateLimiter(5),
   verifySession,
