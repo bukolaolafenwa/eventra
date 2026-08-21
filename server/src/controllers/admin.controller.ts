@@ -1,11 +1,22 @@
 import { Request, Response } from 'express'
+import mongoose from 'mongoose'
 import { getPromotionPackage } from '../config/promotionPackages.js'
 import logger from '../config/logger.js'
 import { sendTsRestError, sendTsRestSuccess } from '../lib/responseHandler.js'
 import tryCatchWrapper from '../lib/tryCatchWrapper.js'
-import { buildPaginationMeta, escapeRegExp, getPagination, sanitizeUser } from '../lib/utils.js'
+import {
+  buildPaginationMeta,
+  escapeRegExp,
+  getPagination,
+  isValidObjectId,
+  sanitizeUser,
+} from '../lib/utils.js'
 import { invalidateUserSessions } from '../lib/sessionStore.js'
 import Event from '../models/event.js'
+import AdminActivity, {
+  AdminActivityAction,
+  AdminActivitySubject,
+} from '../models/adminActivity.js'
 import Order from '../models/order.js'
 import RefundRequest from '../models/refundRequest.js'
 import Ticket from '../models/ticket.js'
@@ -13,10 +24,239 @@ import User from '../models/user.js'
 import { EmailService } from '../services/email.service.js'
 import { paystackService } from '../services/paystack.service.js'
 import { payoutService } from '../services/payout.service.js'
+import {
+  adminDashboardService,
+  normalizeDashboardRange,
+} from '../services/adminDashboard.service.js'
 
 interface InitiateEventPayoutParams {
   eventId: string
 }
+
+const recordAdminActivity = async (
+  req: Request,
+  input: {
+    action: AdminActivityAction
+    subjectType: AdminActivitySubject
+    subjectId: mongoose.Types.ObjectId
+    message: string
+    metadata?: Record<string, unknown>
+  },
+): Promise<void> => {
+  if (!req.session.userId) return
+
+  try {
+    await AdminActivity.create({
+      actor: req.session.userId,
+      ...input,
+    })
+  } catch (error) {
+    logger.error({ err: error }, 'Could not record admin activity')
+  }
+}
+
+const getSafeLimit = (value: unknown, fallback: number, maximum: number): number => {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback
+  return Math.min(parsed, maximum)
+}
+
+export const getAdminOverview = tryCatchWrapper(async (req: Request, res: Response) => {
+  const range = normalizeDashboardRange(req.query.range)
+  const overview = await adminDashboardService.getOverview(range)
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Admin overview fetched',
+    body: overview,
+  })
+})
+
+export const listAdminActivities = tryCatchWrapper(async (req: Request, res: Response) => {
+  const limit = getSafeLimit(req.query.limit, 20, 100)
+  const activities = await adminDashboardService.getActivities(limit)
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Admin activities fetched',
+    body: activities,
+  })
+})
+
+export const listTopOrganizers = tryCatchWrapper(async (req: Request, res: Response) => {
+  const limit = getSafeLimit(req.query.limit, 5, 25)
+  const organizers = await adminDashboardService.getTopOrganizers(limit)
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Top organizers fetched',
+    body: organizers,
+  })
+})
+
+export const getApprovalQueue = tryCatchWrapper(async (req: Request, res: Response) => {
+  const type = typeof req.query.type === 'string' ? req.query.type : 'all'
+  if (!['all', 'events', 'organizers', 'promotions'].includes(type)) {
+    return sendTsRestError(res, 400, 'type must be all, events, organizers or promotions')
+  }
+
+  const limit = getSafeLimit(req.query.limit, 10, 50)
+  const includeEvents = type === 'all' || type === 'events'
+  const includeOrganizers = type === 'all' || type === 'organizers'
+  const includePromotions = type === 'all' || type === 'promotions'
+
+  const [events, organizers, promotions, eventCount, organizerCount, promotionCount] =
+    await Promise.all([
+      includeEvents
+        ? Event.find({ status: 'pending_approval' })
+            .populate('organizer', 'fullname email organizerProfile.businessName')
+            .populate('category', 'name')
+            .sort({ createdAt: 1 })
+            .limit(limit)
+            .lean()
+        : [],
+      includeOrganizers
+        ? User.find({ role: 'organizer', 'organizerProfile.approvalStatus': 'pending' })
+            .select('-password')
+            .sort({ 'organizerProfile.submittedAt': 1, createdAt: 1 })
+            .limit(limit)
+            .lean()
+        : [],
+      includePromotions
+        ? Event.find({ 'promotion.status': 'pending' })
+            .populate('organizer', 'fullname email organizerProfile.businessName')
+            .select('title slug coverImage organizer promotion startDate createdAt')
+            .sort({ 'promotion.paidAt': 1, createdAt: 1 })
+            .limit(limit)
+            .lean()
+        : [],
+      Event.countDocuments({ status: 'pending_approval' }),
+      User.countDocuments({ role: 'organizer', 'organizerProfile.approvalStatus': 'pending' }),
+      Event.countDocuments({ 'promotion.status': 'pending' }),
+    ])
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Approval queue fetched',
+    body: {
+      counts: {
+        events: eventCount,
+        organizers: organizerCount,
+        promotions: promotionCount,
+        total: eventCount + organizerCount + promotionCount,
+      },
+      events,
+      organizers: organizers.map(organizer => sanitizeUser(organizer)),
+      promotions,
+    },
+  })
+})
+
+export const getOrganizerReview = tryCatchWrapper(async (req: Request, res: Response) => {
+  if (!isValidObjectId(req.params.id)) {
+    return sendTsRestError(res, 400, 'Invalid organizer ID')
+  }
+
+  const organizer = await User.findOne({ _id: req.params.id, role: 'organizer' })
+    .select('-password')
+    .lean()
+  if (!organizer) {
+    return sendTsRestError(res, 404, 'Organizer not found')
+  }
+
+  const [eventCount, approvedEventCount, grossSales] = await Promise.all([
+    Event.countDocuments({ organizer: organizer._id }),
+    Event.countDocuments({ organizer: organizer._id, status: { $in: ['approved', 'postponed'] } }),
+    Order.aggregate<{ amount: number }>([
+      { $match: { status: { $in: ['paid', 'partially_refunded', 'refunded'] } } },
+      { $lookup: { from: 'events', localField: 'event', foreignField: '_id', as: 'eventDoc' } },
+      { $unwind: '$eventDoc' },
+      { $match: { 'eventDoc.organizer': organizer._id } },
+      { $group: { _id: null, amount: { $sum: '$subtotal' } } },
+    ]),
+  ])
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Organizer review fetched',
+    body: {
+      organizer: sanitizeUser(organizer),
+      summary: {
+        eventCount,
+        approvedEventCount,
+        grossSales: grossSales[0]?.amount ?? 0,
+      },
+    },
+  })
+})
+
+export const getEventReview = tryCatchWrapper(async (req: Request, res: Response) => {
+  if (!isValidObjectId(req.params.id)) {
+    return sendTsRestError(res, 400, 'Invalid event ID')
+  }
+
+  const event = await Event.findById(req.params.id)
+    .populate('organizer', 'fullname email organizerProfile.businessName organizerProfile.approvalStatus')
+    .populate('category', 'name')
+    .lean()
+  if (!event) {
+    return sendTsRestError(res, 404, 'Event not found')
+  }
+
+  const [orderSummary, refundSummary] = await Promise.all([
+    Order.aggregate<{ orders: number; grossSales: number; tickets: number }>([
+      { $match: { event: event._id, status: { $in: ['paid', 'confirmed', 'partially_refunded', 'refunded'] } } },
+      {
+        $group: {
+          _id: null,
+          orders: { $sum: 1 },
+          grossSales: { $sum: '$subtotal' },
+          tickets: { $sum: { $sum: '$items.quantity' } },
+        },
+      },
+    ]),
+    RefundRequest.aggregate<{ requests: number; amount: number }>([
+      { $match: { event: event._id } },
+      { $group: { _id: null, requests: { $sum: 1 }, amount: { $sum: '$amount' } } },
+    ]),
+  ])
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Event review fetched',
+    body: {
+      event,
+      summary: {
+        orders: orderSummary[0]?.orders ?? 0,
+        tickets: orderSummary[0]?.tickets ?? 0,
+        grossSales: orderSummary[0]?.grossSales ?? 0,
+        refundRequests: refundSummary[0]?.requests ?? 0,
+        refundAmount: refundSummary[0]?.amount ?? 0,
+      },
+    },
+  })
+})
+
+export const listPendingPromotions = tryCatchWrapper(async (req: Request, res: Response) => {
+  const { page, limit, skip } = getPagination(req.query)
+  const filter = { 'promotion.status': 'pending' }
+  const [promotions, total] = await Promise.all([
+    Event.find(filter)
+      .populate('organizer', 'fullname email organizerProfile.businessName')
+      .select('title slug coverImage organizer promotion startDate createdAt')
+      .sort({ 'promotion.paidAt': 1, createdAt: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    Event.countDocuments(filter),
+  ])
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Pending promotions fetched',
+    body: { promotions, meta: buildPaginationMeta(page, limit, total) },
+  })
+})
 
 export const listUsers = tryCatchWrapper(async (req: Request, res: Response) => {
   const { page, limit, skip } = getPagination(req.query)
@@ -151,6 +391,13 @@ export const approveOrganizer = tryCatchWrapper(async (req: Request, res: Respon
   organizer.organizerProfile.approvalStatus = 'approved'
   await organizer.save()
 
+  await recordAdminActivity(req, {
+    action: 'organizer_approved',
+    subjectType: 'organizer',
+    subjectId: organizer._id,
+    message: `Approved organizer ${organizer.organizerProfile.businessName || organizer.fullname}`,
+  })
+
   EmailService.sendOrganizerApprovedEmail(organizer).catch(error =>
     logger.error({ err: error }, `Organizer-approved email failed for ${organizer._id}`)
   )
@@ -171,6 +418,13 @@ export const rejectOrganizer = tryCatchWrapper(async (req: Request, res: Respons
 
   organizer.organizerProfile.approvalStatus = 'rejected'
   await organizer.save()
+
+  await recordAdminActivity(req, {
+    action: 'organizer_rejected',
+    subjectType: 'organizer',
+    subjectId: organizer._id,
+    message: `Rejected organizer ${organizer.organizerProfile.businessName || organizer.fullname}`,
+  })
 
   EmailService.sendOrganizerRejectedEmail(organizer).catch(error =>
     logger.error({ err: error }, `Organizer-rejected email failed for ${organizer._id}`)
@@ -216,6 +470,13 @@ export const approveEvent = tryCatchWrapper(async (req: Request, res: Response) 
   event.publishedAt = new Date()
   await event.save()
 
+  await recordAdminActivity(req, {
+    action: 'event_approved',
+    subjectType: 'event',
+    subjectId: event._id,
+    message: `Approved event ${event.title}`,
+  })
+
   User.findById(event.organizer)
     .then(organizer => {
       if (organizer) {
@@ -245,6 +506,14 @@ export const rejectEvent = tryCatchWrapper(async (req: Request, res: Response) =
   event.status = 'rejected'
   event.rejectionReason = reason
   await event.save()
+
+  await recordAdminActivity(req, {
+    action: 'event_rejected',
+    subjectType: 'event',
+    subjectId: event._id,
+    message: `Rejected event ${event.title}`,
+    metadata: { reason },
+  })
 
   User.findById(event.organizer)
     .then(organizer => {
@@ -284,6 +553,14 @@ export const approveEventPromotion = tryCatchWrapper(async (req: Request, res: R
   event.isPromoted = true
   await event.save()
 
+  await recordAdminActivity(req, {
+    action: 'promotion_approved',
+    subjectType: 'promotion',
+    subjectId: event._id,
+    message: `Approved promotion for ${event.title}`,
+    metadata: { package: event.promotion.package },
+  })
+
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Promotion approved',
@@ -302,6 +579,14 @@ export const rejectEventPromotion = tryCatchWrapper(async (req: Request, res: Re
   event.isPromoted = false
   await event.save()
 
+  await recordAdminActivity(req, {
+    action: 'promotion_rejected',
+    subjectType: 'promotion',
+    subjectId: event._id,
+    message: `Rejected promotion for ${event.title}`,
+    metadata: { package: event.promotion.package },
+  })
+
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Promotion rejected',
@@ -312,12 +597,17 @@ export const rejectEventPromotion = tryCatchWrapper(async (req: Request, res: Re
 export const listRefundRequests = tryCatchWrapper(async (req: Request, res: Response) => {
   const { page, limit, skip } = getPagination(req.query)
   const status = typeof req.query.status === 'string' ? req.query.status : 'pending'
-  const filter = { status }
+  if (!['pending', 'approved', 'rejected', 'processed', 'all'].includes(status)) {
+    return sendTsRestError(res, 400, 'Invalid refund request status')
+  }
+  const filter = status === 'all' ? {} : { status }
 
   const [refundRequests, total] = await Promise.all([
     RefundRequest.find(filter)
-      .populate('event', 'title slug')
+      .populate('event', 'title slug startDate status')
       .populate('requestedBy', 'fullname email')
+      .populate('ticket', 'ticketId attendeeName attendeeEmail ticketTypeName pricePaid status')
+      .populate('order', 'orderNumber customer subtotal refundedAmount paystackReference status')
       .sort({ createdAt: 1 })
       .skip(skip)
       .limit(limit)
@@ -332,17 +622,109 @@ export const listRefundRequests = tryCatchWrapper(async (req: Request, res: Resp
   })
 })
 
-//  * refund. Paystack processing is temporarily unavailable until safe
-//  * reconciliation and retry handling are implemented.
-export const approveRefundRequest = tryCatchWrapper(
-  async (_req: Request, res: Response) => {
-    return sendTsRestError(
-      res,
-      501,
-      'Refund processing is not available yet',
-    )
-  },
-)
+export const getRefundRequest = tryCatchWrapper(async (req: Request, res: Response) => {
+  if (!isValidObjectId(req.params.id)) {
+    return sendTsRestError(res, 400, 'Invalid refund request ID')
+  }
+
+  const refundRequest = await RefundRequest.findById(req.params.id)
+    .populate('event', 'title slug coverImage startDate status refundPolicy organizer')
+    .populate('requestedBy', 'fullname email phone')
+    .populate('ticket', 'ticketId attendeeName attendeeEmail attendeePhone ticketTypeName pricePaid status')
+    .populate('order', 'orderNumber customer subtotal refundedAmount paystackReference status paidAt')
+    .populate('approvedBy rejectedBy', 'fullname email')
+    .lean()
+
+  if (!refundRequest) {
+    return sendTsRestError(res, 404, 'Refund request not found')
+  }
+
+  return sendTsRestSuccess(res, 200, {
+    success: true,
+    message: 'Refund request fetched',
+    body: refundRequest,
+  })
+})
+
+/**
+ * Locks one pending request, submits the refund to Paystack, then records
+ * the local ticket/order updates in a transaction. The intermediate
+ * `approved` state prevents duplicate external refund submissions.
+ */
+export const approveRefundRequest = tryCatchWrapper(async (req: Request, res: Response) => {
+  if (!isValidObjectId(req.params.id)) {
+    return sendTsRestError(res, 400, 'Invalid refund request ID')
+  }
+
+  const pendingRequest = await RefundRequest.findOne({
+    _id: req.params.id,
+    status: 'pending',
+  })
+
+  if (!pendingRequest) {
+    return sendTsRestError(res, 409, 'Refund request is not pending or has already been reviewed')
+  }
+
+  const [order, ticket] = await Promise.all([
+    Order.findById(pendingRequest.order),
+    Ticket.findById(pendingRequest.ticket),
+  ])
+
+  if (!order || !ticket) {
+    return sendTsRestError(res, 409, 'The refund request has an invalid order or ticket')
+  }
+  if (!order.paystackReference) {
+    return sendTsRestError(res, 409, 'The order has no Paystack payment reference')
+  }
+  if (ticket.status === 'refunded') {
+    return sendTsRestError(res, 409, 'This ticket has already been refunded')
+  }
+
+  const remainingRefundable = Math.max(0, order.subtotal - order.refundedAmount)
+  if (pendingRequest.amount > remainingRefundable) {
+    return sendTsRestError(res, 409, 'Refund amount exceeds the order balance')
+  }
+
+  const refundRequest = await RefundRequest.findOneAndUpdate(
+    { _id: pendingRequest._id, status: 'pending' },
+    {
+      $set: {
+        status: 'approved',
+        approvedBy: req.session.userId,
+        approvedAt: new Date(),
+      },
+    },
+    { new: true, runValidators: true },
+  )
+
+  if (!refundRequest) {
+    return sendTsRestError(res, 409, 'Refund request was reviewed by another admin')
+  }
+
+  const paystackRefund = await paystackService.refundTransaction({
+    transactionReference: order.paystackReference,
+    amountNaira: refundRequest.amount,
+    reason: refundRequest.reason || `Refund for ticket ${ticket.ticketId}`,
+  })
+
+  refundRequest.paystackRefundReference = paystackRefund.reference
+  refundRequest.providerStatus = paystackRefund.status
+  await refundRequest.save()
+
+  await recordAdminActivity(req, {
+    action: 'refund_approved',
+    subjectType: 'refund',
+    subjectId: refundRequest._id,
+    message: `Approved refund for ticket ${ticket.ticketId}`,
+    metadata: { amount: refundRequest.amount, eventId: refundRequest.event.toString() },
+  })
+
+  return sendTsRestSuccess(res, 202, {
+    success: true,
+    message: 'Refund queued with Paystack and awaiting provider confirmation',
+    body: refundRequest.toObject(),
+  })
+})
 
 /**
  * Atomically rejects a pending refund request and records the admin,
@@ -389,6 +771,14 @@ export const rejectRefundRequest =
         )
       }
 
+      await recordAdminActivity(req, {
+        action: 'refund_rejected',
+        subjectType: 'refund',
+        subjectId: refundRequest._id,
+        message: 'Rejected refund request',
+        metadata: { reason },
+      })
+
       return sendTsRestSuccess(
         res,
         200,
@@ -427,6 +817,14 @@ export const suspendEvent = tryCatchWrapper(async (req: Request, res: Response) 
   event.suspendedReason = reason
   await event.save()
 
+  await recordAdminActivity(req, {
+    action: 'event_suspended',
+    subjectType: 'event',
+    subjectId: event._id,
+    message: `Suspended event ${event.title}`,
+    metadata: { reason },
+  })
+
   return sendTsRestSuccess(res, 200, {
     success: true,
     message: 'Event suspended',
@@ -445,6 +843,13 @@ export const unsuspendEvent = tryCatchWrapper(async (req: Request, res: Response
   event.status = 'approved'
   event.suspendedReason = undefined
   await event.save()
+
+  await recordAdminActivity(req, {
+    action: 'event_reinstated',
+    subjectType: 'event',
+    subjectId: event._id,
+    message: `Reinstated event ${event.title}`,
+  })
 
   return sendTsRestSuccess(res, 200, {
     success: true,

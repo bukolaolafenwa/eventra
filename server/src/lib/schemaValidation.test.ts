@@ -5,6 +5,7 @@ import {
 } from 'vitest'
 
 import {
+  approveRefundRequestSchema,
   organizerNotificationPreferencesSchema,
 } from './schemaValidation.js'
 
@@ -44,3 +45,11 @@ describe(
     })
   },
 )
+
+describe('approveRefundRequestSchema', () => {
+  it('requires explicit confirmation for the monetary action', () => {
+    expect(approveRefundRequestSchema.safeParse({ confirm: true }).success).toBe(true)
+    expect(approveRefundRequestSchema.safeParse({ confirm: false }).success).toBe(false)
+    expect(approveRefundRequestSchema.safeParse({}).success).toBe(false)
+  })
+})

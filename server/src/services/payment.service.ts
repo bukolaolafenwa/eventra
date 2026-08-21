@@ -15,6 +15,11 @@ import {
   type ReconciledPayoutResult,
 } from './payout.service.js'
 import { ticketService } from './ticket.service.js'
+import {
+  PaystackRefundWebhookData,
+  RefundWebhookResult,
+  refundService,
+} from './refund.service.js'
 
 export interface PaymentConfirmationResult {
   orderId: string
@@ -33,9 +38,15 @@ export interface PromotionPaymentConfirmationResult {
   alreadyConfirmed: boolean
 }
 
+export interface PaystackWebhookData
+  extends Omit<PaystackTransferWebhookData, 'amount'>,
+    PaystackRefundWebhookData {
+  amount?: string | number
+}
+
 export interface PaystackWebhookPayload {
   event: string
-  data?: PaystackTransferWebhookData
+  data?: PaystackWebhookData
 }
 
 export interface WebhookProcessingResult {
@@ -44,6 +55,7 @@ export interface WebhookProcessingResult {
   payment?: PaymentConfirmationResult
   promotionPayment?: PromotionPaymentConfirmationResult
   payout?: ReconciledPayoutResult
+  refund?: RefundWebhookResult
 }
 
 export class PaymentService {
@@ -579,7 +591,7 @@ export class PaymentService {
         await payoutService
           .reconcileTransferWebhook(
             payload.event as PaystackTransferWebhookEvent,
-            payload.data ?? {},
+            (payload.data ?? {}) as PaystackTransferWebhookData,
           )
 
       return {
@@ -588,6 +600,27 @@ export class PaymentService {
         event:
           payload.event,
         payout,
+      }
+    }
+
+    const isRefundEvent = [
+      'refund.pending',
+      'refund.processing',
+      'refund.needs-attention',
+      'refund.failed',
+      'refund.processed',
+    ].includes(payload.event)
+
+    if (isRefundEvent) {
+      const refund = await refundService.reconcileWebhook(
+        payload.event,
+        payload.data ?? {},
+      )
+
+      return {
+        processed: refund.processed,
+        event: payload.event,
+        refund,
       }
     }
 

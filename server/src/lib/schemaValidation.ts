@@ -444,6 +444,10 @@ export const rejectRefundRequestSchema = z.object({
     .max(500, 'Rejection reason cannot exceed 500 characters'),
 })
 
+export const approveRefundRequestSchema = z.object({
+  confirm: z.literal(true),
+})
+
 /**
  * Requires an explicit confirmation before an admin can initiate a
  * real-money organizer payout.
