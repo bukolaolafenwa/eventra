@@ -26,7 +26,7 @@ import { paystackService } from '../services/paystack.service.js'
 import { payoutService } from '../services/payout.service.js'
 import {
   adminDashboardService,
-  normalizeDashboardRange,
+  normalizeDashboardPeriod,
 } from '../services/adminDashboard.service.js'
 
 interface InitiateEventPayoutParams {
@@ -61,16 +61,26 @@ const getSafeLimit = (value: unknown, fallback: number, maximum: number): number
   return Math.min(parsed, maximum)
 }
 
-export const getAdminOverview = tryCatchWrapper(async (req: Request, res: Response) => {
-  const range = normalizeDashboardRange(req.query.range)
-  const overview = await adminDashboardService.getOverview(range)
+export const getAdminOverview = tryCatchWrapper(
+  async (
+    req: Request,
+    res: Response,
+  ): Promise<void> => {
+    const period = normalizeDashboardPeriod(
+      req.query.period,
+      req.query.range,
+    )
 
-  return sendTsRestSuccess(res, 200, {
-    success: true,
-    message: 'Admin overview fetched',
-    body: overview,
-  })
-})
+    const overview =
+      await adminDashboardService.getOverview(period)
+
+    return sendTsRestSuccess(res, 200, {
+      success: true,
+      message: 'Admin overview fetched',
+      body: overview,
+    })
+  },
+)
 
 export const listAdminActivities = tryCatchWrapper(async (req: Request, res: Response) => {
   const limit = getSafeLimit(req.query.limit, 20, 100)

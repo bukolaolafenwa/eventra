@@ -5,9 +5,26 @@ session whose role is `admin`.
 
 ## Overview
 
-### `GET /overview?range=7d`
+### `GET /overview?period=7d`
 
-Accepted ranges are `7d`, `30d`, and `1y`. Returns:
+The preferred query parameter is `period`. Accepted periods are `7d`, `30d`,
+and `12m`.
+
+For backward compatibility, the endpoint also accepts the legacy `range`
+parameter with `7d`, `30d`, `1y`, or `12m`. Legacy `1y` is normalized to
+`12m`. Send either `period` or `range`, but not both.
+
+Examples:
+
+- `GET /overview?period=7d`
+- `GET /overview?period=30d`
+- `GET /overview?period=12m`
+- `GET /overview?range=1y` — legacy compatibility
+
+The response contains the preferred `period` field and the legacy-compatible
+`range` field. The `12m` period is grouped into monthly revenue points.
+
+Returns:
 
 - review-queue counts for events, organizers, promotions, and refunds;
 - gross ticket sales, platform revenue, commission and promotion revenue;

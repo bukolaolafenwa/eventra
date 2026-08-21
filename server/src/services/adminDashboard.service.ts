@@ -7,40 +7,107 @@ import Order from '../models/order.js'
 import RefundRequest from '../models/refundRequest.js'
 import User from '../models/user.js'
 
-export type DashboardRange = '7d' | '30d' | '1y'
+export type DashboardPeriod = '7d' | '30d' | '12m'
 
-const RANGE_DAYS: Record<DashboardRange, number> = {
+const PERIOD_DAYS: Record<Exclude<DashboardPeriod, '12m'>, number> = {
   '7d': 7,
   '30d': 30,
-  '1y': 365,
 }
 
-const getRangeStart = (range: DashboardRange, now = new Date()): Date => {
+const getRangeStart = (
+  period: DashboardPeriod,
+  now = new Date(),
+): Date => {
   const from = new Date(now)
-  from.setUTCDate(from.getUTCDate() - RANGE_DAYS[range] + 1)
+
+  if (period === '12m') {
+    from.setUTCDate(1)
+    from.setUTCMonth(from.getUTCMonth() - 11)
+    from.setUTCHours(0, 0, 0, 0)
+    return from
+  }
+
+  from.setUTCDate(
+    from.getUTCDate() - PERIOD_DAYS[period] + 1,
+  )
   from.setUTCHours(0, 0, 0, 0)
   return from
 }
 
-const getPreviousRangeStart = (rangeStart: Date, range: DashboardRange): Date => {
+const getPreviousRangeStart = (
+  rangeStart: Date,
+  period: DashboardPeriod,
+): Date => {
   const previous = new Date(rangeStart)
-  previous.setUTCDate(previous.getUTCDate() - RANGE_DAYS[range])
+
+  if (period === '12m') {
+    previous.setUTCMonth(previous.getUTCMonth() - 12)
+    return previous
+  }
+
+  previous.setUTCDate(
+    previous.getUTCDate() - PERIOD_DAYS[period],
+  )
   return previous
 }
 
-const percentChange = (current: number, previous: number): number | null => {
+const percentChange = (
+  current: number,
+  previous: number,
+): number | null => {
   if (previous === 0) {
     return current === 0 ? 0 : null
   }
 
-  return Number((((current - previous) / previous) * 100).toFixed(1))
+  return Number(
+    (((current - previous) / previous) * 100).toFixed(1),
+  )
 }
 
-export const normalizeDashboardRange = (value: unknown): DashboardRange => {
+export const normalizeDashboardPeriod = (
+  periodValue: unknown,
+  rangeValue: unknown,
+): DashboardPeriod => {
+  if (
+    periodValue !== undefined &&
+    rangeValue !== undefined
+  ) {
+    throw new ErrorResponse(
+      'Use either period or range, not both',
+      400,
+    )
+  }
+
+  const value = periodValue ?? rangeValue
+
   if (value === undefined) return '7d'
-  if (value === '7d' || value === '30d' || value === '1y') return value
-  throw new ErrorResponse('range must be one of 7d, 30d or 1y', 400)
+
+  if (
+    value === '7d' ||
+    value === '30d' ||
+    value === '12m'
+  ) {
+    return value
+  }
+
+  if (
+    periodValue === undefined &&
+    rangeValue === '1y'
+  ) {
+    return '12m'
+  }
+
+  throw new ErrorResponse(
+    'period must be one of 7d, 30d or 12m',
+    400,
+  )
 }
+
+// Retained for compatibility with existing imports and tests.
+export const normalizeDashboardRange = (
+  value: unknown,
+): DashboardPeriod =>
+  normalizeDashboardPeriod(undefined, value)
 
 const aggregateSales = async (from?: Date, to?: Date) => {
   const createdAt = from
@@ -137,8 +204,11 @@ const getHeldInEscrow = async (now: Date): Promise<number> => {
   return result[0]?.amount ?? 0
 }
 
-const getRevenueSeries = async (from: Date, range: DashboardRange) => {
-  const unit = range === '1y' ? 'month' : 'day'
+const getRevenueSeries = async (
+  from: Date,
+  range: DashboardPeriod,
+) => {
+  const unit = range === '12m' ? 'month' : 'day'
   return Order.aggregate<{ period: Date; grossSales: number; platformRevenue: number }>([
     {
       $match: {
@@ -214,7 +284,7 @@ const getTopOrganizers = async (limit: number) =>
   ])
 
 export class AdminDashboardService {
-  async getOverview(range: DashboardRange) {
+  async getOverview(range: DashboardPeriod) {
     const now = new Date()
     const rangeStart = getRangeStart(range, now)
     const previousStart = getPreviousRangeStart(rangeStart, range)
@@ -267,7 +337,8 @@ export class AdminDashboardService {
     const previousPlatformRevenue = previousSales.commissionRevenue + previousPromotionRevenue
 
     return {
-      range,
+      period: range,
+      range: range === '12m' ? '1y' : range,
       generatedAt: now,
       reviewQueue: {
         pendingEvents,
