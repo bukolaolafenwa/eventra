@@ -9,10 +9,14 @@ export interface IRefundRequest extends Document {
   reason?: string
   amount: number
   status: 'pending' | 'approved' | 'rejected' | 'processed'
+  approvedBy?: mongoose.Types.ObjectId
+  approvedAt?: Date
   rejectionReason?: string
   rejectedBy?: mongoose.Types.ObjectId
   rejectedAt?: Date
   paystackRefundReference?: string
+  providerStatus?: string
+  processingNote?: string
   processedAt?: Date
   createdAt: Date
   updatedAt: Date
@@ -34,6 +38,11 @@ const RefundRequestSchema = new Schema<IRefundRequest>(
       enum: ['pending', 'approved', 'rejected', 'processed'],
       default: 'pending',
     },
+    approvedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    approvedAt: { type: Date },
     rejectionReason: { type: String, trim: true },
     rejectedBy: {
     type: Schema.Types.ObjectId,
@@ -43,6 +52,8 @@ const RefundRequestSchema = new Schema<IRefundRequest>(
     type: Date,
   },
     paystackRefundReference: { type: String, trim: true },
+    providerStatus: { type: String, trim: true },
+    processingNote: { type: String, trim: true },
     processedAt: { type: Date },
   },
   { timestamps: true }

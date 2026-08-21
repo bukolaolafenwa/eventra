@@ -291,3 +291,41 @@ describe('PaystackService transfers', () => {
     )
   })
 })
+
+describe('PaystackService refunds', () => {
+  beforeEach(() => {
+    postMock.mockReset()
+    getMock.mockReset()
+  })
+
+  it('converts the requested Naira amount to kobo', async () => {
+    postMock.mockResolvedValueOnce({
+      data: {
+        status: true,
+        message: 'Refund queued',
+        data: {
+          refund_reference: 'REF_test_refund',
+          status: 'pending',
+        },
+      },
+    })
+
+    const service = new PaystackService()
+    const refund = await service.refundTransaction({
+      transactionReference: 'ORDER-payment-reference',
+      amountNaira: 5000,
+      reason: 'Approved attendee refund',
+    })
+
+    expect(postMock).toHaveBeenCalledWith('/refund', {
+      transaction: 'ORDER-payment-reference',
+      amount: 500000,
+      customer_note: 'Approved attendee refund',
+      merchant_note: 'Approved attendee refund',
+    })
+    expect(refund).toEqual({
+      reference: 'REF_test_refund',
+      status: 'pending',
+    })
+  })
+})
